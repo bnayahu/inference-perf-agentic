@@ -27,6 +27,7 @@ class ChatMessage(BaseModel):
     role: str
     content: Optional[str] = None
     tool_calls: Optional[List[dict]] = None
+    tools: Optional[List[dict]] = None
     id: Optional[str] = None  # For tool role messages
 
 

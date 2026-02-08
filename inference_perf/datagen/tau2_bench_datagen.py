@@ -30,6 +30,25 @@ from .base import DataGenerator, LazyLoadDataMixin
 
 logger = logging.getLogger(__name__)
 
+# Copied from https://github.com/sierra-research/tau2-bench/blob/37199f36924c8896f5e048360691f8476cd89ba1/src/tau2/agent/llm_agent.py
+AGENT_INSTRUCTION = """
+You are a customer service agent that helps the user according to the <policy> provided below.
+In each turn you can either:
+- Send a message to the user.
+- Make a tool call.
+You cannot do both at the same time.
+
+Try to be helpful and always follow the policy. Always make sure you generate valid JSON only.
+""".strip()
+
+SYSTEM_PROMPT = """
+<instructions>
+{agent_instruction}
+</instructions>
+<policy>
+{domain_policy}
+</policy>
+""".strip()
 
 class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
     """
@@ -51,6 +70,11 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         # Load simulation data (supports both local files and URLs)
         self.simulation_data = self._load_simulation_file(config.path)
         
+        # Resolve the tau2 domain and get the corresponding system prompt
+        self.tau2_domain = self.simulation_data.get("info",{}).get("environment_info", {}).get("domain_name", "")
+        self.tau2_system_prompt = self._get_system_prompt(self.tau2_domain)
+        self.tau2_domain_tools = self._get_domain_tools(self.tau2_domain)
+
         # Extract conversations from simulations
         self.conversations: List[List[ChatMessage]] = []
         self.user_sessions: List[LocalUserSession] = []
@@ -98,6 +122,35 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         except Exception as e:
             raise ValueError(f"Failed to load simulation file {path}: {e}")
 
+    def _get_system_prompt(self, domain_name: str) -> str:
+        """
+        Get the Tau2-bench system prompt for the domain. 
+        """
+        policy_file = f"https://raw.githubusercontent.com/sierra-research/tau2-bench/main/web/leaderboard/public/task-data/domains/{domain_name}/policy.md"
+        try:
+            with urllib.request.urlopen(policy_file) as response:
+                domain_policy = response.read().decode('utf-8')
+        except Exception as e:
+            logger.error(f"Failed to load policy file for domain '{domain_name}': {e}")
+            domain_policy = ""
+
+        system_prompt = SYSTEM_PROMPT.format(agent_instruction=AGENT_INSTRUCTION, domain_policy=domain_policy)
+        return system_prompt
+    
+    def _get_domain_tools(self, domain_name: str) -> List:
+        """
+        Get the tool definitions for the domain. 
+        """
+        tools_file = f"https://raw.githubusercontent.com/sierra-research/tau2-bench/main/web/leaderboard/public/task-data/tools-data.json"
+        try:
+            with urllib.request.urlopen(tools_file) as response:
+                tools_data = json.loads(response.read().decode('utf-8'))
+                tools_list = tools_data.get(domain_name,{}).get("tools", [])
+                return tools_list
+        except Exception as e:
+            logger.error(f"Failed to load tools file for domain '{domain_name}': {e}")
+            return []
+        
     def _extract_conversations(self) -> None:
         """
         Extract conversations from simulation data.
@@ -119,6 +172,9 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
             
             conversation: List[ChatMessage] = []
             
+            # system prompt goes on top
+            conversation.append(ChatMessage(role="system", content=self.tau2_system_prompt, tools=self.tau2_domain_tools))
+
             for msg in messages:
                 role = msg.get("role")
                 content = msg.get("content")
@@ -172,7 +228,7 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
             random.shuffle(self.conversations)
 
         logger.info(f"Extracted {len(self.conversations)} conversations from {len(simulations)} simulations")
-        
+                
     def get_supported_apis(self) -> List[APIType]:
         return [APIType.Chat, APIType.Completion]
 
