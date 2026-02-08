@@ -167,18 +167,12 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
                     # Single-turn: just add the full conversation
                     self.conversations.append(conversation)
         
-        # Shuffle conversations for randomness
-        if self.enable_multi_turn_chat:
-            # Shuffle both lists together to maintain correspondence
-            combined = list(zip(self.conversations, self.user_sessions))
-            random.shuffle(combined)
-            if combined:
-                conversations_tuple, sessions_tuple = zip(*combined)
-                self.conversations = list(conversations_tuple)
-                self.user_sessions = list(sessions_tuple)
-        else:
+        # Shuffle conversations for randomness (single-turn mode only)
+        if not self.enable_multi_turn_chat:
             random.shuffle(self.conversations)
 
+        logger.info(f"Extracted {len(self.conversations)} conversations from {len(simulations)} simulations")
+        
     def get_supported_apis(self) -> List[APIType]:
         return [APIType.Chat, APIType.Completion]
 
