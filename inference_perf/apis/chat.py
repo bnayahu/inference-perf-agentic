@@ -25,7 +25,9 @@ from inference_perf.config import APIConfig, APIType
 
 class ChatMessage(BaseModel):
     role: str
-    content: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[dict]] = None
+    id: Optional[str] = None  # For tool role messages
 
 
 class ChatCompletionAPIData(InferenceAPIData):
@@ -43,9 +45,22 @@ class ChatCompletionAPIData(InferenceAPIData):
     ) -> dict[str, Any]:
         if self.max_tokens == 0:
             self.max_tokens = max_tokens
+        
+        # Build messages with support for tool calls
+        messages = []
+        for m in self.messages:
+            msg_dict = {"role": m.role}
+            if m.content is not None:
+                msg_dict["content"] = m.content
+            if m.tool_calls is not None:
+                msg_dict["tool_calls"] = m.tool_calls
+            if m.id is not None:
+                msg_dict["id"] = m.id
+            messages.append(msg_dict)
+        
         return {
             "model": effective_model_name,
-            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
+            "messages": messages,
             "max_tokens": self.max_tokens,
             "ignore_eos": ignore_eos,
             "stream": streaming,
@@ -82,7 +97,7 @@ class ChatCompletionAPIData(InferenceAPIData):
                         continue
                     break
 
-            prompt_text = "".join([msg.content for msg in self.messages if msg.content])
+            prompt_text = "".join([msg.content for msg in self.messages if msg.content is not None])
             prompt_len = tokenizer.count_tokens(prompt_text)
             output_len = tokenizer.count_tokens(output_text)
             return InferenceInfo(
@@ -93,7 +108,7 @@ class ChatCompletionAPIData(InferenceAPIData):
             )
         else:
             data = await response.json()
-            prompt_len = tokenizer.count_tokens("".join([m.content for m in self.messages]))
+            prompt_len = tokenizer.count_tokens("".join([m.content for m in self.messages if m.content is not None]))
             choices = data.get("choices", [])
             if len(choices) == 0:
                 return InferenceInfo(input_tokens=prompt_len, lora_adapter=lora_adapter)
