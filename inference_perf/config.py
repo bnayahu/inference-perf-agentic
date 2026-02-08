@@ -52,6 +52,7 @@ class DataGenType(Enum):
     CNNDailyMail = "cnn_dailymail"
     InfinityInstruct = "infinity_instruct"
     BillsumConversations = "billsum_conversations"
+    Tau2Bench = "tau2_bench"
 
 
 # Represents the distribution for input prompts and output generations.
@@ -84,6 +85,8 @@ class SharedPrefix(BaseModel):
     output_len: int = 50
     enable_multi_turn_chat: bool = False
 
+class Tau2Bench(BaseModel):
+    enable_multi_turn_chat: bool = False
 
 class DataConfig(BaseModel):
     type: DataGenType = DataGenType.Mock
@@ -95,6 +98,7 @@ class DataConfig(BaseModel):
     input_distribution: Optional[Distribution] = None
     output_distribution: Optional[Distribution] = None
     shared_prefix: Optional[SharedPrefix] = None
+    tau2_bench: Optional[Tau2Bench] = None
 
     # Trace file is only supported for random dataset at this moment
     trace: Optional[TraceConfig] = None

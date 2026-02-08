@@ -1,0 +1,15 @@
+data:
+  type: tau2_bench
+  path: https://github.com/sierra-research/tau2-bench/blob/main/data/tau2/results/final/gpt-4.1-2025-04-14_airline_default_gpt-4.1-2025-04-14_4trials.json
+  tau2_bench:
+    enable_multi_turn_chat: true  # Enable multi-turn chat to maintain conversation context
+load:
+  type: constant
+  stages:
+  - rate: 1
+    duration: 30
+api: 
+  type: chat
+server:
+  type: mock
+  base_url: http://0.0.0.0:8000
