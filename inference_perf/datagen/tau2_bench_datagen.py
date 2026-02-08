@@ -104,6 +104,10 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         
         Each simulation contains a series of messages between user and assistant.
         We extract these as separate conversations that can be used for benchmarking.
+        
+        When enable_multi_turn_chat is True, we create multiple conversation instances
+        from each simulation, where each instance includes the conversation history up to
+        and including a specific user message.
         """
         simulations = self.simulation_data.get("simulations", [])
         
@@ -118,28 +122,50 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
             for msg in messages:
                 role = msg.get("role")
                 content = msg.get("content")
+                tool_calls = msg.get("tool_calls")
+                msg_id = msg.get("id")
                 
-                # Skip tool messages and messages without content
-                if role == "tool" or content is None:
-                    continue
-                
-                # Map roles to standard chat format
-                if role in ["user", "assistant"]:
+                # Include user, assistant, and tool messages
+                if role == "user":
                     conversation.append(ChatMessage(role=role, content=content))
+                elif role == "assistant":
+                    # Assistant messages may have content, tool_calls, or both
+                    conversation.append(ChatMessage(
+                        role=role,
+                        content=content,
+                        tool_calls=tool_calls
+                    ))
+                elif role == "tool":
+                    # Tool messages have an id and content
+                    conversation.append(ChatMessage(
+                        role=role,
+                        content=content,
+                        id=msg_id
+                    ))
             
             if len(conversation) >= 2:
-                self.conversations.append(conversation)
-                
-                # For multi-turn chat, create user sessions
                 if self.enable_multi_turn_chat:
-                    # Use first message as context (system prompt)
-                    initial_context = conversation[0].content if conversation else ""
-                    self.user_sessions.append(
-                        LocalUserSession(
-                            user_session_id=f"tau2_session_{sim_idx}",
-                            context=initial_context
+                    # Create multiple conversation instances, one for each user message
+                    # Each instance includes all messages up to and including that user message
+                    user_message_indices = [idx for idx, msg in enumerate(conversation) if msg.role == "user"]
+                    
+                    for turn_idx, user_msg_idx in enumerate(user_message_indices):
+                        # Create a conversation instance up to and including this user message
+                        incremental_conversation = conversation[:user_msg_idx + 1]
+                        self.conversations.append(incremental_conversation)
+                        
+                        # Create a user session for this conversation instance
+                        # Use first message as context (system prompt)
+                        initial_context = conversation[0].content if conversation and conversation[0].content is not None else ""
+                        self.user_sessions.append(
+                            LocalUserSession(
+                                user_session_id=f"tau2_session_{sim_idx}_turn_{turn_idx}",
+                                context=initial_context
+                            )
                         )
-                    )
+                else:
+                    # Single-turn: just add the full conversation
+                    self.conversations.append(conversation)
         
         # Shuffle conversations for randomness
         if self.enable_multi_turn_chat:
@@ -166,11 +192,17 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         return True if self.enable_multi_turn_chat else False
 
     def load_lazy_data(self, data: LazyLoadInferenceAPIData) -> InferenceAPIData:
-        """Load the actual conversation data for lazy-loaded requests."""
+        """
+        Load the actual conversation data for lazy-loaded requests.
+        
+        For multi-turn chat, conversations are pre-generated with incremental history,
+        so we just return the conversation as-is.
+        """
         i = data.data_index % len(self.conversations)
         conversation = self.conversations[i]
         
         if self.api_config.type == APIType.Chat:
+            # Conversations are already pre-generated with the correct incremental history
             return ChatCompletionAPIData(messages=conversation)
         elif self.api_config.type == APIType.Completion:
             if self.enable_multi_turn_chat:
@@ -178,10 +210,10 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
                 user_id = data.data_index % len(self.user_sessions)
                 round_num = data.data_index // len(self.user_sessions)
                 
-                # Get the user's message (skip first if it's the context)
+                # Get the last user message from the pre-generated conversation
                 user_messages = [msg for msg in conversation if msg.role == "user"]
                 if user_messages:
-                    prompt = user_messages[0].content
+                    prompt = user_messages[-1].content  # Use the last user message
                 else:
                     prompt = conversation[0].content if conversation else ""
                 
@@ -202,10 +234,12 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         """Convert a conversation to a single prompt string for completion API."""
         prompt_parts = []
         for msg in conversation:
-            if msg.role == "user":
+            if msg.role == "user" and msg.content:
                 prompt_parts.append(f"User: {msg.content}")
-            elif msg.role == "assistant":
+            elif msg.role == "assistant" and msg.content:
                 prompt_parts.append(f"Assistant: {msg.content}")
+            elif msg.role == "tool" and msg.content:
+                prompt_parts.append(f"Tool: {msg.content}")
         return "\n".join(prompt_parts)
 
     def get_data(self) -> Generator[InferenceAPIData, None, None]:
