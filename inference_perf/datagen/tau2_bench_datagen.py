@@ -126,7 +126,8 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         """
         Get the Tau2-bench system prompt for the domain. 
         """
-        policy_file = f"https://raw.githubusercontent.com/sierra-research/tau2-bench/main/web/leaderboard/public/task-data/domains/{domain_name}/policy.md"
+        policy_file = f"https://raw.githubusercontent.com/sierra-research/tau2-bench/refs/heads/main/data/tau2/domains/{domain_name}/policy.md"
+        
         try:
             with urllib.request.urlopen(policy_file) as response:
                 domain_policy = response.read().decode('utf-8')
@@ -141,7 +142,7 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         """
         Get the tool definitions for the domain. 
         """
-        tools_file = f"https://raw.githubusercontent.com/sierra-research/tau2-bench/main/web/leaderboard/public/task-data/tools-data.json"
+        tools_file = "https://raw.githubusercontent.com/sierra-research/tau2-bench/refs/heads/main/web/leaderboard/public/task-data/tools-data.json"
         try:
             with urllib.request.urlopen(tools_file) as response:
                 tools_data = json.loads(response.read().decode('utf-8'))
