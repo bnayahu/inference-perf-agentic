@@ -21,6 +21,7 @@ from .cnn_dailymail_datagen import CNNDailyMailDataGenerator
 from .infinity_instruct_datagen import InfinityInstructDataGenerator
 from .hf_billsum_datagen import BillsumConversationsDataGenerator
 from .tau2_bench_datagen import Tau2BenchDataGenerator
+from .langfuse_datagen import LangfuseDataGenerator
 
 __all__ = [
     "DataGenerator",
@@ -34,4 +35,5 @@ __all__ = [
     "InfinityInstructDataGenerator",
     "BillsumConversationsDataGenerator",
     "Tau2BenchDataGenerator",
+    "LangfuseDataGenerator",
 ]

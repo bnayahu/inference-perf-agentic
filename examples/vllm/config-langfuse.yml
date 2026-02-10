@@ -1,0 +1,104 @@
+# Example configuration for using Langfuse data generator with inference-perf-agentic
+#
+# This configuration demonstrates how to use the Langfuse data generator to fetch
+# conversation traces from a Langfuse server and use them for benchmarking.
+#
+# Prerequisites:
+# 1. Install langfuse: pip install langfuse
+# 2. Set up environment variables for credentials (recommended):
+#    export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+#    export LANGFUSE_SECRET_KEY="sk-lf-..."
+# 3. Have a Langfuse server with traces available
+
+# API Configuration
+api:
+  type: chat  # Use 'chat' for ChatCompletion API or 'completion' for Completion API
+  streaming: false
+  headers: {}
+
+# Data Configuration - Langfuse
+data:
+  type: langfuse
+  
+  langfuse:
+    # Authentication using environment variables
+    # Set these before running:
+    #   export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+    #   export LANGFUSE_SECRET_KEY="sk-lf-..."
+    #   export LANGFUSE_HOST="https://cloud.langfuse.com"
+    public_key: "${LANGFUSE_PUBLIC_KEY}"
+    secret_key: "${LANGFUSE_SECRET_KEY}"
+    
+    # Langfuse server URL
+    # Use "https://cloud.langfuse.com" for Langfuse Cloud
+    # Or your self-hosted instance URL
+    host: "${LANGFUSE_HOST}"
+    
+    # Optional: Filter by project name
+    # project_name: "my-production-project"
+    
+    # Optional: Filter by tags
+    # tags: ["production", "customer-support"]
+    
+    # Optional: Filter by user IDs
+    # user_ids: ["user123", "user456"]
+    
+    # Optional: Filter by date range (ISO 8601 format)
+    # from_timestamp: "2024-01-01T00:00:00Z"
+    # to_timestamp: "2024-12-31T23:59:59Z"
+    
+    # Optional: Filter by trace name
+    # trace_name: "chat-completion"
+    
+    # Maximum number of traces to fetch
+    limit: 1000
+    
+    # Enable multi-turn chat mode
+    # When true, each conversation is expanded into multiple instances,
+    # one for each user message, with incremental history
+    enable_multi_turn_chat: true
+    
+    # Include system prompts in conversations
+    include_system_prompts: true
+    
+    # Filter traces by status
+    # Options: ["success"], ["error"], or ["success", "error"]
+    filter_by_status: ["success"]
+    
+    # Minimum number of conversation turns required
+    min_turns: 2
+
+# Load Configuration
+load:
+  type: constant  # Options: constant, poisson, concurrent
+  interval: 1.0
+  stages:
+    - rate: 10  # 10 requests per second
+      duration: 60  # for 60 seconds
+
+# Model Server Configuration
+server:
+  type: mock  # Options: vllm, sglang, tgi, mock
+  base_url: "http://localhost:8000/v1"
+  model_name: "meta-llama/Llama-2-7b-chat-hf"
+  ignore_eos: true
+
+# Optional: Tokenizer Configuration
+# tokenizer:
+#   pretrained_model_name_or_path: "meta-llama/Llama-2-7b-chat-hf"
+#   trust_remote_code: false
+
+# Report Configuration
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_request: false
+    percentiles: [0.1, 1, 5, 10, 25, 50, 75, 90, 95, 99, 99.9]
+
+# Storage Configuration
+storage:
+  local_storage:
+    path: "reports-langfuse"
+    report_file_prefix: "langfuse-benchmark"
+    

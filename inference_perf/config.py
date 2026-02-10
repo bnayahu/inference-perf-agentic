@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import logging
+import os
+import re
 from datetime import datetime
 from enum import Enum
 from os import cpu_count
@@ -53,6 +55,7 @@ class DataGenType(Enum):
     InfinityInstruct = "infinity_instruct"
     BillsumConversations = "billsum_conversations"
     Tau2Bench = "tau2_bench"
+    Langfuse = "langfuse"
 
 
 # Represents the distribution for input prompts and output generations.
@@ -88,6 +91,26 @@ class SharedPrefix(BaseModel):
 class Tau2Bench(BaseModel):
     enable_multi_turn_chat: bool = False
 
+
+class LangfuseConfig(BaseModel):
+    """Configuration for Langfuse data generator."""
+    
+    public_key: str = Field(..., description="Langfuse public API key")
+    secret_key: str = Field(..., description="Langfuse secret API key")
+    host: str = Field(default="https://cloud.langfuse.com", description="Langfuse server URL")
+    project_name: Optional[str] = Field(default=None, description="Filter by project name")
+    tags: Optional[List[str]] = Field(default=None, description="Filter by tags")
+    user_ids: Optional[List[str]] = Field(default=None, description="Filter by user IDs")
+    from_timestamp: Optional[datetime] = Field(default=None, description="Filter traces from this timestamp")
+    to_timestamp: Optional[datetime] = Field(default=None, description="Filter traces until this timestamp")
+    trace_name: Optional[str] = Field(default=None, description="Filter by trace name")
+    limit: int = Field(default=1000, gt=0, description="Maximum number of traces to fetch")
+    enable_multi_turn_chat: bool = Field(default=False, description="Enable multi-turn conversation expansion")
+    include_system_prompts: bool = Field(default=True, description="Include system prompts in conversations")
+    filter_by_status: List[str] = Field(default=["success"], description="Filter traces by status (success, error)")
+    min_turns: int = Field(default=2, ge=1, description="Minimum number of conversation turns")
+
+
 class DataConfig(BaseModel):
     type: DataGenType = DataGenType.Mock
 
@@ -99,6 +122,7 @@ class DataConfig(BaseModel):
     output_distribution: Optional[Distribution] = None
     shared_prefix: Optional[SharedPrefix] = None
     tau2_bench: Optional[Tau2Bench] = None
+    langfuse: Optional[LangfuseConfig] = None
 
     # Trace file is only supported for random dataset at this moment
     trace: Optional[TraceConfig] = None
@@ -320,11 +344,39 @@ def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]
     return result
 
 
+def expand_env_vars(config: dict[str, Any]) -> dict[str, Any]:
+    """
+    Recursively expand environment variables in config values.
+    Supports ${VAR_NAME} syntax.
+    """
+    if isinstance(config, dict):
+        return {k: expand_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [expand_env_vars(item) for item in config]
+    elif isinstance(config, str):
+        # Match ${VAR_NAME} pattern
+        pattern = r'\$\{([^}]+)\}'
+        matches = re.findall(pattern, config)
+        result = config
+        for var_name in matches:
+            env_value = os.environ.get(var_name, '')
+            if not env_value:
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Environment variable '{var_name}' not set, using empty string")
+            result = result.replace(f'${{{var_name}}}', env_value)
+        return result
+    else:
+        return config
+
+
 def read_config(config_file: str) -> Config:
     logger = logging.getLogger(__name__)
     logger.info("Using configuration from: %s", config_file)
     with open(config_file, "r") as stream:
         cfg = yaml.safe_load(stream)
+
+    # Expand environment variables
+    cfg = expand_env_vars(cfg)
 
     default_cfg = Config().model_dump(mode="json")
     merged_cfg = deep_merge(default_cfg, cfg)

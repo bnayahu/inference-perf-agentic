@@ -37,6 +37,7 @@ from inference_perf.datagen import (
     InfinityInstructDataGenerator,
     BillsumConversationsDataGenerator,
     Tau2BenchDataGenerator,
+    LangfuseDataGenerator,
 )
 from inference_perf.client.modelserver import (
     ModelServerClient,
@@ -305,6 +306,8 @@ def main_cli() -> None:
             datagen = BillsumConversationsDataGenerator(config.api, config.data, tokenizer)
         elif config.data.type == DataGenType.Tau2Bench:
             datagen = Tau2BenchDataGenerator(config.api, config.data, tokenizer)
+        elif config.data.type == DataGenType.Langfuse:
+            datagen = LangfuseDataGenerator(config.api, config.data, tokenizer)
         else:
             datagen = MockDataGenerator(config.api, config.data, tokenizer)
     else:
