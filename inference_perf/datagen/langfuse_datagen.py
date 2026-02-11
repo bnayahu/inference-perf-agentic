@@ -55,16 +55,13 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
         self.conversations: List[List[ChatMessage]] = []
         self.user_sessions: List[LocalUserSession] = []
         self.enable_multi_turn_chat = self.langfuse_config.enable_multi_turn_chat
-        self.use_mock_data = False
         
         try:
             self._fetch_and_process_traces()
         except ValueError as e:
             # If authentication fails or no traces found, use mock data for testing
             if "authenticate" in str(e).lower() or "No valid conversations" in str(e):
-                logger.warning(f"Langfuse unavailable ({e}), using mock conversation data for testing")
-                self.use_mock_data = True
-                self._generate_mock_conversations()
+                logger.warning(f"Langfuse unavailable ({e})")
             else:
                 raise
         
@@ -160,7 +157,7 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
                 random.shuffle(self.conversations)
             
             logger.info(f"Extracted {len(self.conversations)} conversations from {len(traces)} traces")
-            
+        
         except Exception as e:
             error_msg = str(e)
             if "401" in error_msg or "Unauthorized" in error_msg or "Invalid credentials" in error_msg:
@@ -176,6 +173,7 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
         Extract a conversation from a Langfuse trace.
         
         Builds a conversation thread from generation observations in the trace.
+        For LangChain traces, extracts the full message history from the input field.
         """
         conversation: List[ChatMessage] = []
         
@@ -198,34 +196,83 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
             # Sort by start_time to maintain conversation order
             generations.sort(key=lambda x: x.start_time if x.start_time else datetime.min)
             
-            # Add system prompt if configured and available
-            if self.langfuse_config.include_system_prompts and trace.metadata:
-                system_prompt = trace.metadata.get("system_prompt")
-                if system_prompt:
-                    conversation.append(ChatMessage(role="system", content=system_prompt))
+            # Use the last generation which contains the full conversation history
+            last_gen = generations[-1]
             
-            # Extract messages from generations
-            for gen in generations:
-                # Extract input (user message)
-                if gen.input:
-                    input_content = self._extract_content(gen.input)
-                    if input_content:
-                        conversation.append(ChatMessage(role="user", content=input_content))
-                
-                # Extract output (assistant message)
-                if gen.output:
-                    output_content = self._extract_content(gen.output)
-                    if output_content:
-                        # Check for tool calls in metadata
-                        tool_calls = None
-                        if gen.metadata and "tool_calls" in gen.metadata:
-                            tool_calls = gen.metadata["tool_calls"]
+            # Extract messages from the input field (LangChain format)
+            if last_gen.input and isinstance(last_gen.input, dict):
+                messages_data = last_gen.input.get('messages')
+                if messages_data and isinstance(messages_data, list) and len(messages_data) > 0:
+                    # messages_data is typically [[msg1, msg2, ...]]
+                    if isinstance(messages_data[0], list):
+                        messages_list = messages_data[0]
+                    else:
+                        messages_list = messages_data
+                    
+                    # Extract each message from the LangChain format
+                    for msg in messages_list:
+                        if not isinstance(msg, dict):
+                            continue
+                        
+                        # Extract role and content from LangChain message format
+                        kwargs = msg.get('kwargs', {})
+                        msg_type = kwargs.get('type', '')
+                        content = kwargs.get('content', '')
+                        
+                        # Map LangChain message types to standard roles
+                        role_mapping = {
+                            'system': 'system',
+                            'human': 'user',
+                            'ai': 'assistant',
+                            'tool': 'tool'
+                        }
+                        
+                        role = role_mapping.get(msg_type, msg_type)
+                        
+                        # Skip empty messages unless they have tool calls
+                        if not content and 'tool_calls' not in kwargs:
+                            continue
+                        
+                        # Extract tool calls if present
+                        tool_calls = kwargs.get('tool_calls')
                         
                         conversation.append(ChatMessage(
-                            role="assistant",
-                            content=output_content,
+                            role=role,
+                            content=content if content else "",
                             tool_calls=tool_calls
                         ))
+            
+            # If we couldn't extract from input, fall back to old method
+            if not conversation:
+                logger.debug(f"Falling back to legacy extraction for trace {trace.id}")
+                # Add system prompt if configured and available
+                if self.langfuse_config.include_system_prompts and trace.metadata:
+                    system_prompt = trace.metadata.get("system_prompt")
+                    if system_prompt:
+                        conversation.append(ChatMessage(role="system", content=system_prompt))
+                
+                # Extract messages from generations
+                for gen in generations:
+                    # Extract input (user message)
+                    if gen.input:
+                        input_content = self._extract_content(gen.input)
+                        if input_content:
+                            conversation.append(ChatMessage(role="user", content=input_content))
+                    
+                    # Extract output (assistant message)
+                    if gen.output:
+                        output_content = self._extract_content(gen.output)
+                        if output_content:
+                            # Check for tool calls in metadata
+                            tool_calls = None
+                            if gen.metadata and "tool_calls" in gen.metadata:
+                                tool_calls = gen.metadata["tool_calls"]
+                            
+                            conversation.append(ChatMessage(
+                                role="assistant",
+                                content=output_content,
+                                tool_calls=tool_calls
+                            ))
             
             return conversation if len(conversation) >= 2 else None
             
@@ -236,10 +283,53 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
     def _extract_content(self, data: Any) -> Optional[str]:
         """
         Extract text content from various Langfuse data formats.
+        Handles LangChain message format with nested 'kwargs' structure.
         """
         if isinstance(data, str):
+            # Try to parse as Python literal if it looks like a dict/list
+            if data.strip().startswith('{') or data.strip().startswith('['):
+                try:
+                    import ast
+                    parsed_data = ast.literal_eval(data)
+                    return self._extract_content(parsed_data)
+                except (ValueError, SyntaxError):
+                    return data
             return data
         elif isinstance(data, dict):
+            # Handle LangChain message format: check for 'messages' key first
+            if 'messages' in data:
+                messages_data = data['messages']
+                if isinstance(messages_data, list) and len(messages_data) > 0:
+                    # Get the first array of messages
+                    if isinstance(messages_data[0], list) and len(messages_data[0]) > 0:
+                        # Extract content from the first message in the array
+                        first_msg = messages_data[0][0]
+                        if isinstance(first_msg, dict) and 'kwargs' in first_msg:
+                            content = first_msg['kwargs'].get('content', '')
+                            return content if content else None
+            
+            # Handle LangChain message object with 'kwargs'
+            if 'kwargs' in data:
+                kwargs = data['kwargs']
+                if isinstance(kwargs, dict) and 'content' in kwargs:
+                    return kwargs['content']
+            
+            # Handle LangChain LLMResult format with 'generations'
+            if 'generations' in data:
+                generations = data['generations']
+                if isinstance(generations, list) and len(generations) > 0:
+                    if isinstance(generations[0], list) and len(generations[0]) > 0:
+                        gen = generations[0][0]
+                        if isinstance(gen, dict):
+                            # Check for 'message' with nested kwargs
+                            if 'message' in gen and isinstance(gen['message'], dict):
+                                if 'kwargs' in gen['message']:
+                                    content = gen['message']['kwargs'].get('content', '')
+                                    return content if content else None
+                            # Check for 'text' field
+                            if 'text' in gen:
+                                return gen['text']
+            
             # Try common keys for content
             for key in ["content", "text", "message", "prompt", "completion"]:
                 if key in data:
@@ -250,6 +340,7 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
                         # Handle message arrays (e.g., OpenAI format)
                         if isinstance(value[0], dict) and "content" in value[0]:
                             return value[0]["content"]
+            
             # If no standard key found, try to convert to string
             return str(data)
         elif isinstance(data, list) and len(data) > 0:
@@ -258,41 +349,6 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
                 return self._extract_content(data[0])
             return str(data[0])
         return None
-
-    def _generate_mock_conversations(self) -> None:
-        """
-        Generate mock conversations for testing when Langfuse is unavailable.
-        """
-        logger.info("Generating mock conversations for testing...")
-        
-        # Create a few sample conversations
-        mock_conversations = [
-            [
-                ChatMessage(role="system", content="You are a helpful assistant."),
-                ChatMessage(role="user", content="What is the capital of France?"),
-                ChatMessage(role="assistant", content="The capital of France is Paris."),
-            ],
-            [
-                ChatMessage(role="system", content="You are a helpful assistant."),
-                ChatMessage(role="user", content="How do I make a cake?"),
-                ChatMessage(role="assistant", content="To make a cake, you'll need flour, sugar, eggs, and butter..."),
-            ],
-            [
-                ChatMessage(role="system", content="You are a helpful assistant."),
-                ChatMessage(role="user", content="Tell me a joke."),
-                ChatMessage(role="assistant", content="Why did the chicken cross the road? To get to the other side!"),
-            ],
-        ]
-        
-        if self.enable_multi_turn_chat:
-            # Expand each mock conversation into multi-turn instances
-            for trace_idx, conversation in enumerate(mock_conversations):
-                self._expand_multi_turn_conversation(conversation, trace_idx)
-        else:
-            # Use conversations as-is
-            self.conversations.extend(mock_conversations)
-        
-        logger.info(f"Generated {len(self.conversations)} mock conversations")
 
     def _expand_multi_turn_conversation(self, conversation: List[ChatMessage], trace_idx: int) -> None:
         """
