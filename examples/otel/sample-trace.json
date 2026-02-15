@@ -1,0 +1,106 @@
+{
+  "data": [
+    {
+      "traceID": "abc123def456",
+      "spans": [
+        {
+          "traceID": "abc123def456",
+          "spanID": "span001",
+          "operationName": "chat.completions",
+          "startTime": 1704067200000000,
+          "duration": 1500000,
+          "tags": [
+            {"key": "gen_ai.system", "value": "openai"},
+            {"key": "gen_ai.request.model", "value": "gpt-4"},
+            {"key": "gen_ai.prompt.0.role", "value": "system"},
+            {"key": "gen_ai.prompt.0.content", "value": "You are a helpful assistant that can check weather."},
+            {"key": "gen_ai.prompt.1.role", "value": "user"},
+            {"key": "gen_ai.prompt.1.content", "value": "What's the weather in NYC?"},
+            {"key": "gen_ai.completion.0.role", "value": "assistant"},
+            {"key": "gen_ai.completion.0.finish_reason", "value": "tool_calls"},
+            {"key": "gen_ai.completion.0.tool_calls.0.id", "value": "call_weather_123"},
+            {"key": "gen_ai.completion.0.tool_calls.0.type", "value": "function"},
+            {"key": "gen_ai.completion.0.tool_calls.0.function.name", "value": "get_weather"},
+            {"key": "gen_ai.completion.0.tool_calls.0.function.arguments", "value": "{\"city\":\"NYC\"}"},
+            {"key": "gen_ai.usage.input_tokens", "value": 45},
+            {"key": "gen_ai.usage.output_tokens", "value": 15}
+          ],
+          "logs": [],
+          "references": []
+        },
+        {
+          "traceID": "abc123def456",
+          "spanID": "span002",
+          "operationName": "tool.get_weather",
+          "startTime": 1704067201000000,
+          "duration": 200000,
+          "tags": [
+            {"key": "tool.name", "value": "get_weather"},
+            {"key": "tool.call.id", "value": "call_weather_123"},
+            {"key": "tool.result", "value": "Sunny, 72°F"}
+          ],
+          "logs": [],
+          "references": [
+            {
+              "refType": "CHILD_OF",
+              "traceID": "abc123def456",
+              "spanID": "span001"
+            }
+          ]
+        },
+        {
+          "traceID": "abc123def456",
+          "spanID": "span003",
+          "operationName": "chat.completions",
+          "startTime": 1704067202000000,
+          "duration": 1200000,
+          "tags": [
+            {"key": "gen_ai.system", "value": "openai"},
+            {"key": "gen_ai.request.model", "value": "gpt-4"},
+            {"key": "gen_ai.prompt.0.role", "value": "system"},
+            {"key": "gen_ai.prompt.0.content", "value": "You are a helpful assistant that can check weather."},
+            {"key": "gen_ai.prompt.1.role", "value": "user"},
+            {"key": "gen_ai.prompt.1.content", "value": "What's the weather in NYC?"},
+            {"key": "gen_ai.prompt.2.role", "value": "assistant"},
+            {"key": "gen_ai.prompt.2.tool_calls.0.id", "value": "call_weather_123"},
+            {"key": "gen_ai.prompt.3.role", "value": "tool"},
+            {"key": "gen_ai.prompt.3.content", "value": "Sunny, 72°F"},
+            {"key": "gen_ai.prompt.3.tool_call_id", "value": "call_weather_123"},
+            {"key": "gen_ai.completion.0.role", "value": "assistant"},
+            {"key": "gen_ai.completion.0.content", "value": "The weather in NYC is sunny and 72°F."},
+            {"key": "gen_ai.usage.input_tokens", "value": 85},
+            {"key": "gen_ai.usage.output_tokens", "value": 12}
+          ],
+          "logs": [],
+          "references": []
+        }
+      ]
+    },
+    {
+      "traceID": "xyz789abc012",
+      "spans": [
+        {
+          "traceID": "xyz789abc012",
+          "spanID": "span101",
+          "operationName": "chat.completions",
+          "startTime": 1704067300000000,
+          "duration": 800000,
+          "tags": [
+            {"key": "gen_ai.system", "value": "openai"},
+            {"key": "gen_ai.request.model", "value": "gpt-4"},
+            {"key": "gen_ai.prompt.0.role", "value": "system"},
+            {"key": "gen_ai.prompt.0.content", "value": "You are a helpful assistant."},
+            {"key": "gen_ai.prompt.1.role", "value": "user"},
+            {"key": "gen_ai.prompt.1.content", "value": "Write a haiku about AI."},
+            {"key": "gen_ai.completion.0.role", "value": "assistant"},
+            {"key": "gen_ai.completion.0.content", "value": "Silicon thoughts flow,\nElectric dreams awaken,\nMind meets the machine."},
+            {"key": "gen_ai.usage.input_tokens", "value": 25},
+            {"key": "gen_ai.usage.output_tokens", "value": 20}
+          ],
+          "logs": [],
+          "references": []
+        }
+      ]
+    }
+  ]
+}

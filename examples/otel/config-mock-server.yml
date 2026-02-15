@@ -1,0 +1,33 @@
+# OpenTelemetry Data Generator with Mock Jaeger Server
+#
+# This config is for testing the OTel generator without a real Jaeger instance.
+# Use examples/otel/test_otel_generator.py which starts a mock Jaeger server.
+
+data:
+  type: otel
+  otel:
+    backend: jaeger
+    endpoint: "http://localhost:16686"
+    limit: 10
+    enable_multi_turn_chat: true
+    extract_tool_calls: true
+    min_turns: 1
+
+load:
+  type: constant
+  stages:
+    - rate: 1
+      duration: 10
+
+api:
+  type: chat
+
+server:
+  type: mock
+  base_url: "http://localhost:8000"
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_program: true

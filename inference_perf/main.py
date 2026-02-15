@@ -38,6 +38,7 @@ from inference_perf.datagen import (
     BillsumConversationsDataGenerator,
     Tau2BenchDataGenerator,
     LangfuseDataGenerator,
+    OpenTelemetryDataGenerator,
 )
 from inference_perf.client.modelserver import (
     ModelServerClient,
@@ -308,6 +309,8 @@ def main_cli() -> None:
             datagen = Tau2BenchDataGenerator(config.api, config.data, tokenizer)
         elif config.data.type == DataGenType.Langfuse:
             datagen = LangfuseDataGenerator(config.api, config.data, tokenizer)
+        elif config.data.type == DataGenType.OpenTelemetry:
+            datagen = OpenTelemetryDataGenerator(config.api, config.data, tokenizer)
         else:
             datagen = MockDataGenerator(config.api, config.data, tokenizer)
     else:

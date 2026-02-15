@@ -1,0 +1,64 @@
+# OpenTelemetry Data Generator Example - Jaeger Backend
+#
+# This configuration fetches traces from a Jaeger instance and replays
+# them as inference requests. Useful for replaying production traffic
+# patterns from LLM applications instrumented with OpenTelemetry.
+
+data:
+  type: otel
+  otel:
+    # Jaeger backend configuration
+    backend: jaeger
+    endpoint: "http://localhost:16686"  # Jaeger query service endpoint
+
+    # Optional authentication (uncomment if needed)
+    # auth:
+    #   type: basic
+    #   username: "${JAEGER_USERNAME}"
+    #   password: "${JAEGER_PASSWORD}"
+
+    # Trace filtering
+    service_name: "langchain-agent"  # Filter by service name
+    # operation_name: "chat.completions"  # Filter by operation (optional)
+
+    # Filter by tags (GenAI semantic conventions)
+    tags:
+      - "gen_ai.system=openai"  # Only fetch OpenAI LLM spans
+      # - "environment=production"  # Additional filters
+
+    # Time range
+    lookback: "24h"  # Fetch traces from last 24 hours
+    # Alternatively, specify explicit time range:
+    # start_time: "2024-01-01T00:00:00Z"
+    # end_time: "2024-01-02T00:00:00Z"
+
+    # Trace selection
+    limit: 500  # Maximum number of traces to fetch
+    min_duration_ms: 100  # Filter out very fast traces
+    max_duration_ms: 30000  # Filter out very slow traces
+
+    # Conversation extraction
+    enable_multi_turn_chat: true  # Expand into incremental conversations
+    include_system_prompts: true  # Include system prompts
+    extract_tool_calls: true  # Extract tool calls from spans
+    min_turns: 2  # Minimum conversation turns
+
+load:
+  type: constant
+  stages:
+    - rate: 5  # 5 requests per second
+      duration: 120  # For 2 minutes
+
+api:
+  type: chat
+  streaming: false
+
+server:
+  type: mock  # Change to 'vllm' for real testing
+  base_url: "http://localhost:8000"
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_program: true  # Enable program-level reporting

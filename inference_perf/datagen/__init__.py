@@ -22,6 +22,7 @@ from .infinity_instruct_datagen import InfinityInstructDataGenerator
 from .hf_billsum_datagen import BillsumConversationsDataGenerator
 from .tau2_bench_datagen import Tau2BenchDataGenerator
 from .langfuse_datagen import LangfuseDataGenerator
+from .otel_datagen import OpenTelemetryDataGenerator
 
 __all__ = [
     "DataGenerator",
@@ -36,4 +37,5 @@ __all__ = [
     "BillsumConversationsDataGenerator",
     "Tau2BenchDataGenerator",
     "LangfuseDataGenerator",
+    "OpenTelemetryDataGenerator",
 ]

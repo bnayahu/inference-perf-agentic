@@ -60,6 +60,7 @@ class DataGenType(Enum):
     BillsumConversations = "billsum_conversations"
     Tau2Bench = "tau2_bench"
     Langfuse = "langfuse"
+    OpenTelemetry = "otel"
 
 
 # Represents the distribution for input prompts and output generations.
@@ -100,7 +101,7 @@ class Tau2Bench(BaseModel):
 
 class LangfuseConfig(BaseModel):
     """Configuration for Langfuse data generator."""
-    
+
     public_key: str = Field(..., description="Langfuse public API key")
     secret_key: str = Field(..., description="Langfuse secret API key")
     host: str = Field(default="https://cloud.langfuse.com", description="Langfuse server URL")
@@ -117,6 +118,65 @@ class LangfuseConfig(BaseModel):
     min_turns: int = Field(default=2, ge=1, description="Minimum number of conversation turns")
 
 
+class OTelBackendType(str, Enum):
+    """Supported OpenTelemetry backend types."""
+    JAEGER = "jaeger"
+    TEMPO = "tempo"
+    ZIPKIN = "zipkin"
+    CUSTOM = "custom"
+
+
+class OTelAuthType(str, Enum):
+    """Authentication types for OpenTelemetry backends."""
+    NONE = "none"
+    BASIC = "basic"
+    BEARER = "bearer"
+    API_KEY = "api_key"
+
+
+class OTelAuthConfig(BaseModel):
+    """Authentication configuration for OpenTelemetry backends."""
+    type: OTelAuthType = OTelAuthType.NONE
+    username: Optional[str] = None
+    password: Optional[str] = None
+    bearer_token: Optional[str] = None
+    api_key: Optional[str] = None
+    api_key_header: Optional[str] = "X-API-Key"
+
+
+class OpenTelemetryConfig(BaseModel):
+    """Configuration for OpenTelemetry data generator."""
+
+    # Backend configuration
+    backend: OTelBackendType = Field(default=OTelBackendType.JAEGER, description="OTel backend type")
+    endpoint: str = Field(..., description="Backend API endpoint URL")
+    auth: Optional[OTelAuthConfig] = Field(default=None, description="Authentication configuration")
+
+    # Trace filtering
+    service_name: Optional[str] = Field(default=None, description="Filter by service name")
+    operation_name: Optional[str] = Field(default=None, description="Filter by operation/span name")
+    tags: Optional[List[str]] = Field(default=None, description="Filter by tags (key=value format)")
+
+    # Time range
+    start_time: Optional[datetime] = Field(default=None, description="Start time for trace query")
+    end_time: Optional[datetime] = Field(default=None, description="End time for trace query")
+    lookback: Optional[str] = Field(default=None, description="Relative time range (e.g., '24h', '7d')")
+
+    # Trace selection
+    limit: int = Field(default=1000, gt=0, description="Maximum number of traces to fetch")
+    min_duration_ms: Optional[int] = Field(default=None, ge=0, description="Minimum trace duration in ms")
+    max_duration_ms: Optional[int] = Field(default=None, ge=0, description="Maximum trace duration in ms")
+
+    # Conversation extraction
+    enable_multi_turn_chat: bool = Field(default=False, description="Enable multi-turn conversation expansion")
+    include_system_prompts: bool = Field(default=True, description="Include system prompts in conversations")
+    extract_tool_calls: bool = Field(default=True, description="Extract tool calls from spans")
+    min_turns: int = Field(default=1, ge=1, description="Minimum number of conversation turns")
+
+    # Advanced options
+    trace_id_as_program_id: bool = Field(default=True, description="Use trace_id as program_id")
+
+
 class DataConfig(BaseModel):
     type: DataGenType = DataGenType.Mock
 
@@ -129,6 +189,7 @@ class DataConfig(BaseModel):
     shared_prefix: Optional[SharedPrefix] = None
     tau2_bench: Optional[Tau2Bench] = None
     langfuse: Optional[LangfuseConfig] = None
+    otel: Optional[OpenTelemetryConfig] = None
 
     # Trace file is only supported for random dataset at this moment
     trace: Optional[TraceConfig] = None
