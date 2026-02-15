@@ -63,6 +63,8 @@ class MockModelServerClient(ModelServerClient):
                         start_time=start,
                         end_time=time.perf_counter(),
                         scheduled_time=scheduled_time,
+                        program_id=data.program_id,
+                        turn_index=data.turn_index,
                     )
                 )
         except asyncio.exceptions.TimeoutError as e:
@@ -83,6 +85,8 @@ class MockModelServerClient(ModelServerClient):
                     start_time=start,
                     end_time=time.perf_counter(),
                     scheduled_time=scheduled_time,
+                    program_id=data.program_id,
+                    turn_index=data.turn_index,
                 )
             )
 

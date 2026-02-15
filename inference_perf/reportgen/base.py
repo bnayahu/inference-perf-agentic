@@ -170,6 +170,98 @@ def calculate_slo_metrics(
 
     return slo_metrics
 
+def summarize_programs(
+    metrics: List[RequestLifecycleMetric],
+    percentiles: List[float]
+) -> dict[str, Any]:
+    """
+    Aggregate metrics by program_id for multi-turn agentic workloads.
+
+    Args:
+        metrics: List of successful RequestLifecycleMetric objects with program_id
+        percentiles: Percentiles to compute for aggregated metrics
+
+    Returns:
+        Dictionary mapping program_id to program-level metrics
+    """
+    # Group metrics by program_id
+    programs: dict[str, List[RequestLifecycleMetric]] = defaultdict(list)
+    for metric in metrics:
+        if metric.program_id is not None:
+            programs[metric.program_id].append(metric)
+
+    # If no programs found, return empty dict
+    if not programs:
+        return {}
+
+    program_summaries: dict[str, Any] = {}
+
+    for program_id, program_metrics in programs.items():
+        # Sort by turn_index to ensure correct ordering
+        program_metrics.sort(key=lambda m: m.turn_index if m.turn_index is not None else 0)
+
+        # Basic metrics
+        num_turns = len(program_metrics)
+        program_completion_time = max(m.end_time for m in program_metrics) - min(m.start_time for m in program_metrics)
+
+        # Per-turn metrics
+        per_turn_request_latency = [(m.end_time - m.start_time) for m in program_metrics]
+        per_turn_ttft: List[Optional[float]] = []
+        per_turn_prompt_len = [safe_float(m.info.input_tokens) for m in program_metrics]
+        per_turn_output_len = [safe_float(m.info.output_tokens) for m in program_metrics]
+
+        # Calculate TTFT for each turn (if streamable)
+        for m in program_metrics:
+            if m.info.output_token_times and len(m.info.output_token_times) > 0:
+                ttft = m.info.output_token_times[0] - m.start_time
+                per_turn_ttft.append(ttft)
+            else:
+                per_turn_ttft.append(None)
+
+        # Filter out None values for aggregation
+        valid_ttft = [t for t in per_turn_ttft if t is not None]
+        total_ttft = sum(valid_ttft) if valid_ttft else 0.0
+
+        # Calculate cache benefit proxy: ttft_turn0 / mean(ttft_turn1_plus)
+        # This approximates the benefit of prefix caching in multi-turn conversations
+        cache_benefit_proxy = None
+        if len(valid_ttft) > 1:
+            ttft_turn0 = valid_ttft[0]
+            ttft_later_turns = valid_ttft[1:]
+            if ttft_later_turns and ttft_turn0 > 0:
+                mean_later_ttft = sum(ttft_later_turns) / len(ttft_later_turns)
+                if mean_later_ttft > 0:
+                    cache_benefit_proxy = ttft_turn0 / mean_later_ttft
+
+        program_summaries[program_id] = {
+            "program_completion_time": program_completion_time,
+            "num_turns": num_turns,
+            "total_ttft": total_ttft,
+            "per_turn_ttft": per_turn_ttft,
+            "per_turn_request_latency": per_turn_request_latency,
+            "per_turn_prompt_len": per_turn_prompt_len,
+            "per_turn_output_len": per_turn_output_len,
+            "cache_benefit_proxy": cache_benefit_proxy,
+            "total_input_tokens": sum(per_turn_prompt_len),
+            "total_output_tokens": sum(per_turn_output_len),
+        }
+
+    # Aggregate statistics across all programs
+    all_program_completion_times = [p["program_completion_time"] for p in program_summaries.values()]
+    all_num_turns = [p["num_turns"] for p in program_summaries.values()]
+    all_cache_benefit_proxies = [p["cache_benefit_proxy"] for p in program_summaries.values() if p["cache_benefit_proxy"] is not None]
+
+    aggregate_stats = {
+        "num_programs": len(programs),
+        "program_completion_time": summarize(all_program_completion_times, percentiles),
+        "num_turns": summarize([float(x) for x in all_num_turns], percentiles),
+        "cache_benefit_proxy": summarize(all_cache_benefit_proxies, percentiles) if all_cache_benefit_proxies else None,
+    }
+
+    return {
+        "aggregate": aggregate_stats,
+        "per_program": program_summaries,
+    }
 
 def summarize_prometheus_metrics(metrics: ModelServerMetrics) -> ResponsesSummary:
     return ResponsesSummary(
@@ -559,6 +651,18 @@ class ReportGenerator:
                     contents=summarize_requests(metrics, percentiles, stage_rate).model_dump(),
                 )
                 lifecycle_reports.append(report_file)
+
+        if report_config.request_lifecycle.per_program:
+            # Filter only successful requests with program_id
+            program_metrics = [m for m in request_metrics if m.error is None and m.program_id is not None]
+            if program_metrics:
+                program_summary = summarize_programs(program_metrics, percentiles)
+                if program_summary:
+                    report_file = ReportFile(
+                        name="per_program_lifecycle_metrics",
+                        contents=program_summary,
+                    )
+                    lifecycle_reports.append(report_file)
 
         if report_config.prometheus:
             lifecycle_reports.extend(self.generate_prometheus_metrics_report(runtime_parameters, report_config.prometheus))

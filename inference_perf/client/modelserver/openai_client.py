@@ -234,6 +234,8 @@ class openAIModelServerClientSession(ModelServerClientSession):
             start_time=start,
             end_time=end_time,
             scheduled_time=scheduled_time,
+            program_id=data.program_id,
+            turn_index=data.turn_index,
         )
 
         # Grab TTFT and TPOT thresholds from request headers if available for streaming requests with token-level timestamps

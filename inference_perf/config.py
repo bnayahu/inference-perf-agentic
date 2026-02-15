@@ -282,6 +282,7 @@ class RequestLifecycleMetricsReportConfig(BaseModel):
     per_request: Optional[bool] = False
     per_adapter: Optional[bool] = True
     per_adapter_stage: Optional[bool] = False
+    per_program: Optional[bool] = False  # Program-level aggregation for agentic workloads
     percentiles: List[float] = [0.1, 1, 5, 10, 25, 50, 75, 90, 95, 99, 99.9]
 
 

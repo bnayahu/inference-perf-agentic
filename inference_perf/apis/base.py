@@ -46,6 +46,10 @@ class RequestLifecycleMetric(BaseModel):
     ttft_slo_sec: Optional[float] = None
     tpot_slo_sec: Optional[float] = None
 
+    # Program-level tracking for agentic workloads
+    program_id: Optional[str] = None
+    turn_index: Optional[int] = None
+
 
 class InferenceAPIData(BaseModel):
     # loadgen should assign this request to prefered worker if possible
