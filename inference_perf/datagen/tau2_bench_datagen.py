@@ -164,6 +164,9 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
         and including a specific user message.
         """
         simulations = self.simulation_data.get("simulations", [])
+
+        # Store metadata for each conversation: (program_id, turn_index)
+        self.conversation_metadata: List[tuple[str, int]] = []
         
         for sim_idx, simulation in enumerate(simulations):
             messages = simulation.get("messages", [])
@@ -201,16 +204,19 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
                     ))
             
             if len(conversation) >= 2:
+                program_id = f"tau2_{sim_idx}"
+
                 if self.enable_multi_turn_chat:
                     # Create multiple conversation instances, one for each user message
                     # Each instance includes all messages up to and including that user message
                     user_message_indices = [idx for idx, msg in enumerate(conversation) if msg.role == "user"]
-                    
+
                     for turn_idx, user_msg_idx in enumerate(user_message_indices):
                         # Create a conversation instance up to and including this user message
                         incremental_conversation = conversation[:user_msg_idx + 1]
                         self.conversations.append(incremental_conversation)
-                        
+                        self.conversation_metadata.append((program_id, turn_idx))
+
                         # Create a user session for this conversation instance
                         # Use first message as context (system prompt)
                         initial_context = conversation[0].content if conversation and conversation[0].content is not None else ""
@@ -223,6 +229,7 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
                 else:
                     # Single-turn: just add the full conversation
                     self.conversations.append(conversation)
+                    self.conversation_metadata.append((program_id, 0))
         
         # Shuffle conversations for randomness (single-turn mode only)
         if not self.enable_multi_turn_chat:
@@ -245,39 +252,51 @@ class Tau2BenchDataGenerator(DataGenerator, LazyLoadDataMixin):
     def load_lazy_data(self, data: LazyLoadInferenceAPIData) -> InferenceAPIData:
         """
         Load the actual conversation data for lazy-loaded requests.
-        
+
         For multi-turn chat, conversations are pre-generated with incremental history,
         so we just return the conversation as-is.
         """
         i = data.data_index % len(self.conversations)
         conversation = self.conversations[i]
-        
+        program_id, turn_index = self.conversation_metadata[i]
+
         if self.api_config.type == APIType.Chat:
             # Conversations are already pre-generated with the correct incremental history
-            return ChatCompletionAPIData(messages=conversation)
+            return ChatCompletionAPIData(
+                messages=conversation,
+                program_id=program_id,
+                turn_index=turn_index
+            )
         elif self.api_config.type == APIType.Completion:
             if self.enable_multi_turn_chat:
                 # Multi-turn: use user session to maintain context
                 user_id = data.data_index % len(self.user_sessions)
                 round_num = data.data_index // len(self.user_sessions)
-                
+
                 # Get the last user message from the pre-generated conversation
                 user_messages = [msg for msg in conversation if msg.role == "user"]
                 if user_messages:
                     prompt = user_messages[-1].content  # Use the last user message
                 else:
                     prompt = conversation[0].content if conversation else ""
-                
+
                 return UserSessionCompletionAPIData(
                     prompt=prompt,
                     max_tokens=150,  # Default max tokens
                     user_session=self.user_sessions[user_id],
                     target_round=round_num,
+                    program_id=program_id,
+                    turn_index=turn_index,
                 )
             else:
                 # Single-turn: concatenate all messages into a prompt
                 prompt = self._conversation_to_prompt(conversation)
-                return CompletionAPIData(prompt=prompt, max_tokens=150)
+                return CompletionAPIData(
+                    prompt=prompt,
+                    max_tokens=150,
+                    program_id=program_id,
+                    turn_index=turn_index,
+                )
         else:
             raise ValueError(f"Unsupported API type: {self.api_config.type}")
 

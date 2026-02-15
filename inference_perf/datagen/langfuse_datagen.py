@@ -138,16 +138,21 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
                 page += 1
             
             logger.info(f"Fetched {len(traces)} traces from Langfuse")
-            
+
+            # Store metadata for each conversation: (program_id, turn_index)
+            self.conversation_metadata: List[tuple[str, int]] = []
+
             # Process each trace into conversations
             for trace_idx, trace in enumerate(traces):
                 try:
                     conversation = self._extract_conversation_from_trace(trace)
                     if conversation and len(conversation) >= self.langfuse_config.min_turns:
                         if self.enable_multi_turn_chat:
-                            self._expand_multi_turn_conversation(conversation, trace_idx)
+                            self._expand_multi_turn_conversation(conversation, trace)
                         else:
                             self.conversations.append(conversation)
+                            # Use trace.id as program_id
+                            self.conversation_metadata.append((trace.id, 0))
                 except Exception as e:
                     logger.warning(f"Failed to process trace {trace.id}: {e}")
                     continue
@@ -350,28 +355,30 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
             return str(data[0])
         return None
 
-    def _expand_multi_turn_conversation(self, conversation: List[ChatMessage], trace_idx: int) -> None:
+    def _expand_multi_turn_conversation(self, conversation: List[ChatMessage], trace: Any) -> None:
         """
         Expand a conversation into multiple instances for multi-turn chat.
-        
+
         Similar to tau2_bench implementation, creates incremental conversation instances.
         """
         # Find all user message indices
         user_message_indices = [idx for idx, msg in enumerate(conversation) if msg.role == "user"]
-        
+        program_id = trace.id  # Use trace.id as program_id
+
         for turn_idx, user_msg_idx in enumerate(user_message_indices):
             # Create a conversation instance up to and including this user message
             incremental_conversation = conversation[:user_msg_idx + 1]
             self.conversations.append(incremental_conversation)
-            
+            self.conversation_metadata.append((program_id, turn_idx))
+
             # Create a user session for this conversation instance
             initial_context = ""
             if conversation and conversation[0].role == "system" and conversation[0].content:
                 initial_context = conversation[0].content
-            
+
             self.user_sessions.append(
                 LocalUserSession(
-                    user_session_id=f"langfuse_session_{trace_idx}_turn_{turn_idx}",
+                    user_session_id=f"langfuse_session_{program_id}_turn_{turn_idx}",
                     context=initial_context
                 )
             )
@@ -391,39 +398,51 @@ class LangfuseDataGenerator(DataGenerator, LazyLoadDataMixin):
     def load_lazy_data(self, data: LazyLoadInferenceAPIData) -> InferenceAPIData:
         """
         Load the actual conversation data for lazy-loaded requests.
-        
+
         For multi-turn chat, conversations are pre-generated with incremental history,
         so we just return the conversation as-is.
         """
         i = data.data_index % len(self.conversations)
         conversation = self.conversations[i]
-        
+        program_id, turn_index = self.conversation_metadata[i]
+
         if self.api_config.type == APIType.Chat:
             # Conversations are already pre-generated with the correct incremental history
-            return ChatCompletionAPIData(messages=conversation)
+            return ChatCompletionAPIData(
+                messages=conversation,
+                program_id=program_id,
+                turn_index=turn_index
+            )
         elif self.api_config.type == APIType.Completion:
             if self.enable_multi_turn_chat:
                 # Multi-turn: use user session to maintain context
                 user_id = data.data_index % len(self.user_sessions)
                 round_num = data.data_index // len(self.user_sessions)
-                
+
                 # Get the last user message from the pre-generated conversation
                 user_messages = [msg for msg in conversation if msg.role == "user"]
                 if user_messages:
                     prompt = user_messages[-1].content  # Use the last user message
                 else:
                     prompt = conversation[0].content if conversation else ""
-                
+
                 return UserSessionCompletionAPIData(
                     prompt=prompt,
                     max_tokens=150,  # Default max tokens
                     user_session=self.user_sessions[user_id],
                     target_round=round_num,
+                    program_id=program_id,
+                    turn_index=turn_index,
                 )
             else:
                 # Single-turn: concatenate all messages into a prompt
                 prompt = self._conversation_to_prompt(conversation)
-                return CompletionAPIData(prompt=prompt, max_tokens=150)
+                return CompletionAPIData(
+                    prompt=prompt,
+                    max_tokens=150,
+                    program_id=program_id,
+                    turn_index=turn_index,
+                )
         else:
             raise ValueError(f"Unsupported API type: {self.api_config.type}")
 

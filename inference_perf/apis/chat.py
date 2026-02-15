@@ -46,9 +46,10 @@ class ChatCompletionAPIData(InferenceAPIData):
     ) -> dict[str, Any]:
         if self.max_tokens == 0:
             self.max_tokens = max_tokens
-        
+
         # Build messages with support for tool calls
         messages = []
+        tools = None
         for m in self.messages:
             msg_dict = {"role": m.role}
             if m.content is not None:
@@ -58,8 +59,12 @@ class ChatCompletionAPIData(InferenceAPIData):
             if m.id is not None:
                 msg_dict["id"] = m.id
             messages.append(msg_dict)
-        
-        return {
+
+            # Extract tools from system message (tools should be sent as top-level field)
+            if m.tools is not None and tools is None:
+                tools = m.tools
+
+        payload = {
             "model": effective_model_name,
             "messages": messages,
             "max_tokens": self.max_tokens,
@@ -67,6 +72,12 @@ class ChatCompletionAPIData(InferenceAPIData):
             "stream": streaming,
             **({"stream_options": {"include_usage": "true"}} if streaming else {}),
         }
+
+        # Add tools as top-level field if present
+        if tools is not None:
+            payload["tools"] = tools
+
+        return payload
 
     async def process_response(
         self, response: ClientResponse, config: APIConfig, tokenizer: CustomTokenizer, lora_adapter: Optional[str] = None

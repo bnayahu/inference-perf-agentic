@@ -51,6 +51,10 @@ class InferenceAPIData(BaseModel):
     # loadgen should assign this request to prefered worker if possible
     prefered_worker_id: int = -1  # no prefered worker by default
 
+    # Metadata for program-level aggregation (for multi-turn agentic workloads)
+    program_id: Optional[str] = None  # Unique identifier for a program/trace (e.g., "tau2_0", trace_id)
+    turn_index: Optional[int] = None  # Turn number within a multi-turn conversation (0-indexed)
+
     @abstractmethod
     def get_api_type(self) -> APIType:
         raise NotImplementedError
