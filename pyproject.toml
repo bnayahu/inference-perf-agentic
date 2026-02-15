@@ -28,6 +28,9 @@ inference-perf = "inference_perf:main_cli"
 analysis = [
     "matplotlib>=3.9.0",
 ]
+langfuse = [
+    "langfuse>=2.0",
+]
 dev = [
     "mypy>=1.14.1",
     "ruff>=0.9.4",
@@ -146,6 +149,7 @@ module = [
     "datasets.*",
     "matplotlib.*",
     "boto3.*",
+    "langfuse.*",
 ]
 ignore_missing_imports = true
 
