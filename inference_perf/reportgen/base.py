@@ -13,7 +13,7 @@
 # limitations under the License.
 import logging
 from collections import defaultdict
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TYPE_CHECKING
 
 
 import numpy as np
@@ -26,6 +26,11 @@ from inference_perf.client.metricsclient.prometheus_client import PrometheusMetr
 from inference_perf.client.requestdatacollector import RequestDataCollector
 from inference_perf.config import Config, PrometheusMetricsReportConfig, ReportConfig
 from inference_perf.utils import ReportFile
+
+if TYPE_CHECKING:
+    from inference_perf.loadgen.agentic_load_generator import StageResult
+    from inference_perf.loadgen.session_runner import SessionResult
+    from inference_perf.loadgen.saturation_detector import SaturationResult
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +267,54 @@ def summarize_programs(
         "aggregate": aggregate_stats,
         "per_program": program_summaries,
     }
+
+
+
+def summarize_sessions(
+    session_results: List["SessionResult"],
+    percentiles: List[float],
+) -> dict[str, Any]:
+    """
+    Summarize session metrics from agentic workload execution.
+
+    Args:
+        session_results: List of SessionResult objects from agentic load generation.
+        percentiles: Percentiles to compute for aggregated metrics.
+
+    Returns:
+        Dictionary with summarized session metrics.
+    """
+    if not session_results:
+        return {}
+
+    # Extract values for summarization
+    latencies = [sr.session_latency_ms for sr in session_results]
+    inference_times = [sr.session_inference_time_ms for sr in session_results]
+    pause_times = [sr.session_pause_time_ms for sr in session_results]
+    duty_cycles = [sr.inference_duty_cycle for sr in session_results]
+    turns_completed = [float(sr.turns_completed) for sr in session_results]
+    input_tokens = [float(sr.session_input_tokens) for sr in session_results]
+    output_tokens = [float(sr.session_output_tokens) for sr in session_results]
+    peak_contexts = [float(sr.peak_context_length) for sr in session_results]
+
+    return {
+        "count": len(session_results),
+        "session_latency_ms": summarize(latencies, percentiles),
+        "session_inference_time_ms": summarize(inference_times, percentiles),
+        "session_pause_time_ms": summarize(pause_times, percentiles),
+        "inference_duty_cycle": summarize(duty_cycles, percentiles),
+        "turns_completed": summarize(turns_completed, percentiles),
+        "session_input_tokens": summarize(input_tokens, percentiles),
+        "session_output_tokens": summarize(output_tokens, percentiles),
+        "peak_context_length": summarize(peak_contexts, percentiles),
+        "throughput": {
+            "total_sessions": len(session_results),
+            "total_turns": sum(sr.turns_completed for sr in session_results),
+            "total_input_tokens": sum(sr.session_input_tokens for sr in session_results),
+            "total_output_tokens": sum(sr.session_output_tokens for sr in session_results),
+        },
+    }
+
 
 def summarize_prometheus_metrics(metrics: ModelServerMetrics) -> ResponsesSummary:
     return ResponsesSummary(
@@ -711,3 +764,123 @@ class ReportGenerator:
                     logger.warning("No metrics collected for Stage %d", stage_id)
 
         return prometheus_metrics_reports
+
+    def generate_session_reports(
+        self,
+        session_results: List["SessionResult"],
+        stage_results: List["StageResult"],
+        report_config: ReportConfig,
+    ) -> List[ReportFile]:
+        """
+        Generate reports for agentic session metrics.
+
+        Args:
+            session_results: List of SessionResult from agentic load generation.
+            stage_results: List of StageResult from agentic load generation.
+            report_config: Report configuration.
+
+        Returns:
+            List of ReportFile objects containing session-level reports.
+        """
+        from inference_perf.metrics import SessionMetrics, TurnPositionMetrics, SystemMetrics
+
+        reports: List[ReportFile] = []
+        percentiles = report_config.request_lifecycle.percentiles
+
+        if not session_results:
+            logger.warning("No session results available for report generation")
+            return reports
+
+        # Convert SessionResult to SessionMetrics
+        session_metrics = [
+            SessionMetrics.from_session_result(sr)
+            for sr in session_results
+        ]
+
+        # Session summary report (aggregate statistics)
+        if report_config.request_lifecycle.session_summary:
+            session_summary = summarize_sessions(session_results, percentiles)
+            if session_summary:
+                reports.append(ReportFile(
+                    name="session_summary_metrics",
+                    contents=session_summary,
+                ))
+
+        # Per-session detailed metrics
+        if report_config.request_lifecycle.per_session:
+            reports.append(ReportFile(
+                name="per_session_metrics",
+                contents=[sm.to_dict() for sm in session_metrics],
+            ))
+
+        # Per-turn-position metrics (aggregated across sessions)
+        if report_config.request_lifecycle.per_turn_position:
+            max_turns = max((sm.turns_completed for sm in session_metrics), default=0)
+            turn_position_metrics = []
+            for turn_idx in range(max_turns):
+                tpm = TurnPositionMetrics.from_session_metrics_list(turn_idx, session_metrics)
+                if tpm.count > 0:
+                    turn_position_metrics.append(tpm.to_dict())
+
+            if turn_position_metrics:
+                reports.append(ReportFile(
+                    name="per_turn_position_metrics",
+                    contents=turn_position_metrics,
+                ))
+
+        # System-level summary
+        if report_config.request_lifecycle.system_summary:
+            system_metrics = SystemMetrics.from_stage_results(stage_results)
+            reports.append(ReportFile(
+                name="system_summary_metrics",
+                contents=system_metrics.to_summary_dict(),
+            ))
+
+        # Time series data
+        if report_config.request_lifecycle.timeseries:
+            system_metrics = SystemMetrics.from_stage_results(stage_results)
+            timeseries_data = {
+                "active_sessions": [
+                    {"time": ts, "value": val}
+                    for ts, val in system_metrics.active_sessions_timeseries
+                ],
+                "request_rate": [
+                    {"time": ts, "value": val}
+                    for ts, val in system_metrics.effective_request_rate_timeseries
+                ],
+            }
+            reports.append(ReportFile(
+                name="session_timeseries",
+                contents=timeseries_data,
+            ))
+
+        return reports
+
+    def generate_sweep_report(
+        self,
+        saturation_result: "SaturationResult",
+    ) -> List[ReportFile]:
+        """Generate reports for sweep/saturation detection.
+
+        Args:
+            saturation_result: Result from saturation detection.
+
+        Returns:
+            List of ReportFile objects containing sweep analysis.
+        """
+        from inference_perf.loadgen import SaturationResult
+
+        reports: List[ReportFile] = []
+
+        if saturation_result is None:
+            return reports
+
+        # Main sweep report with saturation details
+        sweep_summary = saturation_result.to_dict()
+
+        reports.append(ReportFile(
+            name="sweep_saturation_report",
+            contents=sweep_summary,
+        ))
+
+        return reports

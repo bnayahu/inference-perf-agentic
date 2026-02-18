@@ -61,6 +61,9 @@ class DataGenType(Enum):
     Tau2Bench = "tau2_bench"
     Langfuse = "langfuse"
     OpenTelemetry = "otel"
+    # Agentic data types
+    AgenticSynthetic = "agentic_synthetic"
+    AgenticCsv = "agentic_csv"
 
 
 # Represents the distribution for input prompts and output generations.
@@ -97,6 +100,116 @@ class SharedPrefix(BaseModel):
 
 class Tau2Bench(BaseModel):
     enable_multi_turn_chat: bool = False
+
+
+# Distribution configuration for agentic workloads
+class DistributionParams(BaseModel):
+    """Parameters for distribution sampling."""
+    type: str = Field(default="normal", description="Distribution type: normal, uniform, constant")
+    mean: float = Field(default=0, description="Mean value (for normal distribution)")
+    std_dev: float = Field(default=1, description="Standard deviation (for normal distribution)")
+    min: float = Field(default=0, description="Minimum value")
+    max: float = Field(default=0, description="Maximum value (for uniform distribution)")
+    value: Optional[float] = Field(default=None, description="Constant value (for constant distribution)")
+
+
+class AgenticSyntheticConfig(BaseModel):
+    """Configuration for synthetic agentic session generation."""
+    num_sessions: int = Field(default=100, gt=0, description="Number of sessions to generate")
+    turns_per_session: DistributionParams = Field(
+        default_factory=lambda: DistributionParams(type="normal", mean=5, std_dev=2, min=1, max=20),
+        description="Distribution for number of turns per session"
+    )
+    tool_call_probability: float = Field(
+        default=0.5, ge=0, le=1,
+        description="Probability that a turn ends with tool calls"
+    )
+    tool_calls_per_turn: DistributionParams = Field(
+        default_factory=lambda: DistributionParams(type="normal", mean=2, std_dev=1, min=1, max=5),
+        description="Distribution for number of tool calls per turn"
+    )
+    input_tokens_turn_0: DistributionParams = Field(
+        default_factory=lambda: DistributionParams(type="normal", mean=500, std_dev=100, min=100, max=2000),
+        description="Distribution for input tokens in first turn"
+    )
+    output_tokens_per_turn: DistributionParams = Field(
+        default_factory=lambda: DistributionParams(type="normal", mean=150, std_dev=50, min=10, max=500),
+        description="Distribution for output tokens per turn"
+    )
+    tool_result_tokens: DistributionParams = Field(
+        default_factory=lambda: DistributionParams(type="normal", mean=100, std_dev=30, min=10, max=500),
+        description="Distribution for tool result tokens"
+    )
+    system_prompt_tokens: int = Field(default=0, ge=0, description="Fixed system prompt tokens")
+    content_strategy: str = Field(
+        default="random",
+        description="Content generation strategy: random, synthetic, template"
+    )
+
+
+class AgenticCsvConfig(BaseModel):
+    """Configuration for loading agentic sessions from CSV."""
+    path: str = Field(..., description="Path to CSV file containing session data")
+
+
+class DelayType(str, Enum):
+    """Types of inter-turn delays."""
+    REPLAY = "replay"
+    FIXED = "fixed"
+    DISTRIBUTION = "distribution"
+    ZERO = "zero"
+
+
+class DelayConfig(BaseModel):
+    """Configuration for inter-turn delays."""
+    type: DelayType = Field(default=DelayType.ZERO, description="Delay type")
+    fixed_ms: Optional[int] = Field(default=None, ge=0, description="Fixed delay in milliseconds")
+    distribution: Optional[DistributionParams] = Field(
+        default=None, description="Distribution for delay sampling"
+    )
+
+
+class AgenticDelayConfig(BaseModel):
+    """Configuration for delays in agentic workloads."""
+    tool_call_delay: DelayConfig = Field(
+        default_factory=lambda: DelayConfig(type=DelayType.ZERO),
+        description="Delay after tool calls"
+    )
+    user_think_delay: DelayConfig = Field(
+        default_factory=lambda: DelayConfig(type=DelayType.ZERO),
+        description="Delay between user turns"
+    )
+
+
+class SessionArrivalType(str, Enum):
+    """Types of session arrival patterns."""
+    CONSTANT = "constant"
+    POISSON = "poisson"
+    TRACE = "trace"
+
+
+class SessionStageConfig(BaseModel):
+    """Configuration for a single session load stage."""
+    rate: Optional[float] = Field(default=None, gt=0, description="Session arrival rate (sessions/sec)")
+    duration: Optional[int] = Field(default=None, gt=0, description="Stage duration in seconds")
+    active_sessions: Optional[int] = Field(default=None, gt=0, description="Number of concurrent sessions")
+    total_sessions: Optional[int] = Field(default=None, gt=0, description="Total sessions to run in stage")
+
+
+class SessionArrivalConfig(BaseModel):
+    """Configuration for session arrival patterns."""
+    type: SessionArrivalType = Field(
+        default=SessionArrivalType.CONSTANT,
+        description="Session arrival type"
+    )
+    time_scale: float = Field(
+        default=1.0, gt=0,
+        description="Time scale for trace replay (1.0 = real-time, 2.0 = 2x speed)"
+    )
+    stages: List[SessionStageConfig] = Field(
+        default_factory=list,
+        description="Session load stages"
+    )
 
 
 class LangfuseConfig(BaseModel):
@@ -191,6 +304,10 @@ class DataConfig(BaseModel):
     langfuse: Optional[LangfuseConfig] = None
     otel: Optional[OpenTelemetryConfig] = None
 
+    # Agentic workload configurations
+    agentic_synthetic: Optional[AgenticSyntheticConfig] = None
+    agentic_csv: Optional[AgenticCsvConfig] = None
+
     # Trace file is only supported for random dataset at this moment
     trace: Optional[TraceConfig] = None
 
@@ -207,6 +324,10 @@ class LoadType(Enum):
     POISSON = "poisson"
     TRACE_REPLAY = "trace_replay"
     CONCURRENT = "concurrent"
+    # Agentic load types
+    AGENTIC = "agentic"
+    AGENTIC_CONCURRENT = "agentic_concurrent"
+    AGENTIC_TRACE_REPLAY = "agentic_trace_replay"
 
 
 class MetricsClientType(Enum):
@@ -270,6 +391,58 @@ class SweepConfig(BaseModel):
     saturation_percentile: float = 95
 
 
+class AgenticSweepConfig(BaseModel):
+    """Configuration for agentic workload sweep/saturation detection.
+
+    Sweep mode automatically determines the saturation point by ramping
+    session arrival rate and monitoring session_inference_time degradation.
+    """
+    type: StageGenType = Field(
+        default=StageGenType.LINEAR,
+        description="Stage generation type: linear or geometric"
+    )
+    num_sessions: int = Field(
+        default=200, gt=0,
+        description="Number of sessions per probe stage"
+    )
+    timeout: float = Field(
+        default=120, gt=0,
+        description="Timeout in seconds for each probe stage"
+    )
+    num_stages: int = Field(
+        default=5, gt=0,
+        description="Number of stages to generate after saturation detection"
+    )
+    stage_duration: int = Field(
+        default=180, gt=0,
+        description="Duration of each generated stage in seconds"
+    )
+    saturation_metric: str = Field(
+        default="session_inference_time_p95",
+        description="Metric to monitor for saturation detection"
+    )
+    degradation_threshold: float = Field(
+        default=0.2, ge=0, le=1,
+        description="Relative increase in metric that indicates saturation (0.2 = 20%)"
+    )
+    probe_rates: Optional[List[float]] = Field(
+        default=None,
+        description="Explicit probe rates to test (if None, auto-generates)"
+    )
+    min_probe_rate: float = Field(
+        default=1.0, gt=0,
+        description="Minimum session arrival rate to probe"
+    )
+    max_probe_rate: float = Field(
+        default=50.0, gt=0,
+        description="Maximum session arrival rate to probe"
+    )
+    num_probes: int = Field(
+        default=5, gt=0,
+        description="Number of probe rate levels"
+    )
+
+
 class MultiLoRAConfig(BaseModel):
     name: str
     split: float
@@ -289,20 +462,56 @@ class LoadConfig(BaseModel):
     lora_traffic_split: Optional[List[MultiLoRAConfig]] = None
     base_seed: int = Field(default_factory=lambda: int(time.time() * 1000))
 
+    # Agentic workload configurations
+    session_arrival: Optional[SessionArrivalConfig] = None
+    agentic: Optional[AgenticDelayConfig] = None
+    agentic_sweep: Optional[AgenticSweepConfig] = None
+    worker_affinity: bool = Field(
+        default=True,
+        description="Pin sessions to workers for better cache utilization"
+    )
+
     @model_validator(mode="after")
     def validate_load_config(self) -> "LoadConfig":
-        # Validate that sweep is not used with concurrent load type
+        # Check if this is an agentic load type
+        is_agentic = self.type in (
+            LoadType.AGENTIC,
+            LoadType.AGENTIC_CONCURRENT,
+            LoadType.AGENTIC_TRACE_REPLAY
+        )
+
+        # Validate that sweep is not used with concurrent or agentic load types
         if self.type == LoadType.CONCURRENT and self.sweep is not None:
             raise ValueError("Cannot have sweep config with CONCURRENT load type")
+        if is_agentic and self.sweep is not None:
+            raise ValueError("Cannot have sweep config with agentic load types (use agentic_sweep instead)")
 
-        # Validate stage types match load type
+        # Validate agentic_sweep is only used with agentic load types
+        if self.agentic_sweep is not None:
+            if not is_agentic:
+                raise ValueError("agentic_sweep can only be used with agentic load types")
+            if self.type == LoadType.AGENTIC_TRACE_REPLAY:
+                raise ValueError("agentic_sweep cannot be used with AGENTIC_TRACE_REPLAY load type")
+
+        # Agentic load types require session_arrival config
+        if is_agentic:
+            if self.session_arrival is None:
+                # Use default session_arrival config
+                self.session_arrival = SessionArrivalConfig()
+            # For trace replay, require trace type
+            if self.type == LoadType.AGENTIC_TRACE_REPLAY:
+                if self.session_arrival.type != SessionArrivalType.TRACE:
+                    self.session_arrival.type = SessionArrivalType.TRACE
+            return self
+
+        # Validate stage types match load type (for non-agentic types)
         if self.type == LoadType.CONCURRENT:
             for i, stage in enumerate(self.stages):
                 if not isinstance(stage, ConcurrentLoadStage):
                     raise ValueError(
                         f"Stage {i}: CONCURRENT load type requires ConcurrentLoadStage, got {type(stage).__name__}"
                     )
-        else:  # CONSTANT or POISSON
+        elif self.type in (LoadType.CONSTANT, LoadType.POISSON, LoadType.TRACE_REPLAY):
             for i, stage in enumerate(self.stages):
                 if not isinstance(stage, StandardLoadStage):
                     raise ValueError(
@@ -344,7 +553,13 @@ class RequestLifecycleMetricsReportConfig(BaseModel):
     per_adapter: Optional[bool] = True
     per_adapter_stage: Optional[bool] = False
     per_program: Optional[bool] = False  # Program-level aggregation for agentic workloads
+    per_session: Optional[bool] = False  # Session-level metrics for agentic workloads
+    per_turn_position: Optional[bool] = False  # Metrics aggregated by turn position
     percentiles: List[float] = [0.1, 1, 5, 10, 25, 50, 75, 90, 95, 99, 99.9]
+    # Agentic-specific report options
+    session_summary: Optional[bool] = False  # Summary statistics for session metrics
+    system_summary: Optional[bool] = False  # System-level agentic metrics
+    timeseries: Optional[bool] = False  # Time series data (active sessions, request rates)
 
 
 class PrometheusMetricsReportConfig(BaseModel):

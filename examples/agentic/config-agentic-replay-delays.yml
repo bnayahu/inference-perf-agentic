@@ -1,0 +1,50 @@
+# Agentic Replay Delays Example
+#
+# This configuration replays the original tool execution delays from
+# the source data, providing realistic inter-turn timing patterns.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_csv
+  agentic_csv:
+    path: examples/agentic/data/sessions.csv
+
+load:
+  type: agentic
+  num_workers: 4
+  worker_max_concurrency: 50
+
+  session_arrival:
+    type: constant
+    stages:
+      - rate: 1.0
+        duration: 120
+
+  agentic:
+    # Replay original tool execution times from the data
+    # This uses the tool_duration_ms values from CSV or OTel traces
+    tool_call_delay:
+      type: replay
+
+    # No delay for user think time
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_replay_delays

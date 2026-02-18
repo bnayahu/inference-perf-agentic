@@ -1,0 +1,49 @@
+# Agentic CSV Data Generator Example
+#
+# This configuration loads agentic sessions from a CSV file containing
+# turn-level data. Useful for replaying production traces or custom datasets.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_csv
+  agentic_csv:
+    # Path to CSV file with session data
+    # See README.md for expected CSV format
+    path: examples/agentic/data/sessions.csv
+
+load:
+  type: agentic
+  num_workers: 4
+  worker_max_concurrency: 50
+
+  session_arrival:
+    type: poisson  # Poisson arrivals for more realistic traffic
+    stages:
+      - rate: 2.0       # Average 2 sessions per second
+        duration: 180   # for 3 minutes
+
+  agentic:
+    tool_call_delay:
+      type: replay  # Replay original tool durations from CSV
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_csv

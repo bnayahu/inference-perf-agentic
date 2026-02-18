@@ -1,0 +1,82 @@
+# Agentic Fixed Delays Example
+#
+# This configuration uses fixed delays between turns, useful for
+# controlled benchmarking with predictable timing.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 100
+    turns_per_session:
+      type: normal
+      mean: 5
+      std_dev: 2
+      min: 1
+      max: 12
+    tool_call_probability: 0.5
+    tool_calls_per_turn:
+      type: normal
+      mean: 2
+      std_dev: 1
+      min: 1
+      max: 4
+    input_tokens_turn_0:
+      type: normal
+      mean: 500
+      std_dev: 100
+      min: 100
+      max: 1500
+    output_tokens_per_turn:
+      type: normal
+      mean: 150
+      std_dev: 50
+      min: 20
+      max: 400
+    tool_result_tokens:
+      type: normal
+      mean: 100
+      std_dev: 30
+      min: 10
+      max: 300
+
+load:
+  type: agentic
+  num_workers: 4
+  worker_max_concurrency: 50
+
+  session_arrival:
+    type: constant
+    stages:
+      - rate: 1.0
+        duration: 120
+
+  agentic:
+    # Fixed 200ms delay after tool calls
+    tool_call_delay:
+      type: fixed
+      fixed_ms: 200
+
+    # Fixed 500ms delay for user think time (between non-tool turns)
+    user_think_delay:
+      type: fixed
+      fixed_ms: 500
+
+report:
+  request_lifecycle:
+    summary: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_fixed_delays

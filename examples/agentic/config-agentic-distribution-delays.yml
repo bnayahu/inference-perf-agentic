@@ -1,0 +1,92 @@
+# Agentic Distribution-Based Delays Example
+#
+# This configuration uses statistical distributions for inter-turn
+# delays, simulating more realistic and varied timing patterns.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 150
+    turns_per_session:
+      type: normal
+      mean: 5
+      std_dev: 2
+      min: 1
+      max: 12
+    tool_call_probability: 0.55
+    tool_calls_per_turn:
+      type: normal
+      mean: 2
+      std_dev: 1
+      min: 1
+      max: 4
+    input_tokens_turn_0:
+      type: normal
+      mean: 500
+      std_dev: 120
+      min: 150
+      max: 1800
+    output_tokens_per_turn:
+      type: normal
+      mean: 160
+      std_dev: 50
+      min: 30
+      max: 450
+    tool_result_tokens:
+      type: normal
+      mean: 110
+      std_dev: 40
+      min: 15
+      max: 350
+
+load:
+  type: agentic
+  num_workers: 6
+  worker_max_concurrency: 75
+
+  session_arrival:
+    type: constant
+    stages:
+      - rate: 1.5
+        duration: 150
+
+  agentic:
+    # Tool call delays sampled from a normal distribution
+    # Simulates variable tool execution times
+    tool_call_delay:
+      type: distribution
+      distribution:
+        type: normal
+        mean: 150    # Average 150ms
+        std_dev: 50  # Standard deviation 50ms
+        min: 50      # Minimum 50ms
+        max: 500     # Maximum 500ms
+
+    # User think time sampled from uniform distribution
+    # Simulates variable human response times
+    user_think_delay:
+      type: distribution
+      distribution:
+        type: uniform
+        min: 100     # Minimum 100ms
+        max: 1000    # Maximum 1000ms
+
+report:
+  request_lifecycle:
+    summary: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_distribution_delays

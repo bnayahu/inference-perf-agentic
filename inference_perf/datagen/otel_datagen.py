@@ -17,7 +17,7 @@
 import logging
 import random
 from datetime import datetime, timedelta
-from typing import Generator, List, Optional
+from typing import Generator, List, Optional, Tuple
 
 from inference_perf.apis import (
     InferenceAPIData,
@@ -29,8 +29,9 @@ from inference_perf.apis import (
 from inference_perf.apis.user_session import LocalUserSession, UserSessionCompletionAPIData
 from inference_perf.config import APIConfig, APIType, DataConfig, OTelBackendType
 from inference_perf.utils.custom_tokenizer import CustomTokenizer
-from inference_perf.client.otel import JaegerClient, OTelBackendClient, OTelTrace
+from inference_perf.client.otel import JaegerClient, OTelBackendClient, OTelTrace, OTelSpan
 from inference_perf.utils.otel_extractor import GenAIMessageExtractor, ToolResponseExtractor
+from inference_perf.models import Session, Turn, ToolCall, FinishReason
 from .base import DataGenerator, LazyLoadDataMixin
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,9 @@ class OpenTelemetryDataGenerator(DataGenerator, LazyLoadDataMixin):
         self.user_sessions: List[LocalUserSession] = []
         self.conversation_metadata: List[tuple[str, int]] = []
         self.enable_multi_turn_chat = self.otel_config.enable_multi_turn_chat
+
+        # Storage for agentic sessions
+        self.sessions: List[Session] = []
 
         # Fetch and process traces
         try:
@@ -126,6 +130,12 @@ class OpenTelemetryDataGenerator(DataGenerator, LazyLoadDataMixin):
         # Process each trace
         for trace in traces:
             try:
+                # Extract agentic session (new)
+                session = self._extract_session_from_trace(trace)
+                if session is not None:
+                    self.sessions.append(session)
+
+                # Extract conversations (existing behavior)
                 conversations = self._extract_conversations_from_trace(trace)
                 for conversation in conversations:
                     # Filter by minimum turns
@@ -147,7 +157,7 @@ class OpenTelemetryDataGenerator(DataGenerator, LazyLoadDataMixin):
             self.conversations = list(self.conversations)
             self.conversation_metadata = list(self.conversation_metadata)
 
-        logger.info(f"Extracted {len(self.conversations)} conversations from {len(traces)} traces")
+        logger.info(f"Extracted {len(self.conversations)} conversations and {len(self.sessions)} sessions from {len(traces)} traces")
 
     def _parse_time_range(self) -> tuple[Optional[datetime], Optional[datetime]]:
         """Parse time range from config."""
@@ -188,6 +198,216 @@ class OpenTelemetryDataGenerator(DataGenerator, LazyLoadDataMixin):
                 tags_dict[key.strip()] = value.strip()
 
         return tags_dict if tags_dict else None
+
+    def _extract_session_from_trace(self, trace: OTelTrace) -> Optional[Session]:
+        """Extract an agentic Session from an OTel trace.
+
+        Maps OTel spans to Turn objects, extracting:
+        - Token counts from gen_ai.usage attributes
+        - Tool calls and their durations from child spans
+        - Timestamps for trace replay
+        """
+        # Find all LLM spans (spans with gen_ai.system attribute)
+        llm_spans = [
+            span for span in trace.spans
+            if 'gen_ai.system' in span.attributes
+        ]
+
+        if not llm_spans:
+            return None
+
+        # Sort spans by start time to get turn order
+        llm_spans.sort(key=lambda s: s.start_time)
+
+        # Filter by minimum turns
+        if len(llm_spans) < self.otel_config.min_turns:
+            return None
+
+        turns: List[Turn] = []
+        prev_input_tokens = 0
+
+        for turn_idx, span in enumerate(llm_spans):
+            # Extract token usage
+            input_tokens, output_tokens = self.message_extractor.extract_usage(span)
+
+            # Calculate new context tokens
+            new_context_tokens = max(0, input_tokens - prev_input_tokens) if turn_idx > 0 else 0
+            prev_input_tokens = input_tokens
+
+            # Determine finish reason
+            finish_reason = self._get_finish_reason(span)
+
+            # Extract tool calls
+            tool_calls = self._extract_tool_calls_from_span(span, trace.spans)
+
+            # Extract timing information
+            llm_latency_ms = int(span.duration_ms)
+            ttft_ms = self._extract_ttft_from_span(span)
+            timestamp_ms = int(span.start_time.timestamp() * 1000)
+
+            turn = Turn(
+                session_id=trace.trace_id,
+                turn_index=turn_idx,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                new_context_tokens=new_context_tokens,
+                finish_reason=finish_reason,
+                tool_calls=tool_calls,
+                llm_latency_ms=llm_latency_ms,
+                ttft_ms=ttft_ms,
+                timestamp_ms=timestamp_ms,
+            )
+            turns.append(turn)
+
+        if not turns:
+            return None
+
+        # Create session
+        session = Session(
+            session_id=trace.trace_id,
+            turns=turns,
+            original_start_time_ms=int(trace.start_time.timestamp() * 1000),
+        )
+
+        return session
+
+    def _get_finish_reason(self, span: OTelSpan) -> FinishReason:
+        """Extract finish reason from span attributes."""
+        # Check completion attributes for finish reason
+        for key, value in span.attributes.items():
+            if 'finish_reason' in key:
+                if value == 'tool_calls':
+                    return FinishReason.TOOL_CALLS
+                elif value == 'stop':
+                    return FinishReason.STOP
+                elif value == 'length':
+                    return FinishReason.LENGTH
+                elif value == 'content_filter':
+                    return FinishReason.CONTENT_FILTER
+
+        # Default to stop
+        return FinishReason.STOP
+
+    def _extract_tool_calls_from_span(
+        self,
+        llm_span: OTelSpan,
+        all_spans: List[OTelSpan]
+    ) -> List[ToolCall]:
+        """Extract tool calls and their durations from span and child spans."""
+        tool_calls: List[ToolCall] = []
+
+        # Find tool call attributes in the LLM span
+        tc_indices = self.message_extractor._get_attribute_indices(
+            llm_span.attributes, 'gen_ai.completion.0.tool_calls'
+        )
+
+        # Find child spans that represent tool executions
+        child_spans = [s for s in all_spans if s.parent_span_id == llm_span.span_id]
+
+        for tc_idx in tc_indices:
+            prefix = f'gen_ai.completion.0.tool_calls.{tc_idx}'
+            tool_call_id = llm_span.attributes.get(f'{prefix}.id')
+            function_name = llm_span.attributes.get(f'{prefix}.function.name')
+            function_args = llm_span.attributes.get(f'{prefix}.function.arguments')
+
+            if function_name:
+                # Find matching tool execution span for duration
+                duration_ms = 0
+                result_tokens = 0
+
+                tool_span = self._find_tool_execution_span(
+                    child_spans, function_name, tool_call_id
+                )
+
+                if tool_span:
+                    duration_ms = int(tool_span.duration_ms)
+                    # Try to estimate result tokens from tool result
+                    result_tokens = self._estimate_tool_result_tokens(tool_span)
+
+                tool_calls.append(ToolCall(
+                    name=function_name,
+                    duration_ms=duration_ms,
+                    result_tokens=result_tokens,
+                    arguments=function_args,
+                    tool_call_id=tool_call_id,
+                ))
+
+        return tool_calls
+
+    def _find_tool_execution_span(
+        self,
+        child_spans: List[OTelSpan],
+        tool_name: str,
+        tool_call_id: Optional[str]
+    ) -> Optional[OTelSpan]:
+        """Find the span corresponding to a tool execution."""
+        for span in child_spans:
+            # Check operation name
+            if tool_name.lower() in span.operation_name.lower():
+                return span
+
+            # Check various attribute patterns
+            if span.attributes.get('tool.name') == tool_name:
+                return span
+
+            if tool_call_id and span.attributes.get('tool.call.id') == tool_call_id:
+                return span
+
+            if span.attributes.get('function.name') == tool_name:
+                return span
+
+        return None
+
+    def _estimate_tool_result_tokens(self, tool_span: OTelSpan) -> int:
+        """Estimate the number of tokens in a tool result."""
+        # Try to get result from span
+        result = (
+            tool_span.attributes.get('tool.result') or
+            tool_span.attributes.get('function.result') or
+            tool_span.attributes.get('output') or
+            tool_span.attributes.get('response') or
+            tool_span.attributes.get('result')
+        )
+
+        if result is not None:
+            result_str = str(result)
+            # Rough estimation: ~4 characters per token
+            return len(result_str) // 4
+
+        return 0
+
+    def _extract_ttft_from_span(self, span: OTelSpan) -> Optional[int]:
+        """Extract time to first token from span events or attributes."""
+        # Check for TTFT in attributes
+        ttft = span.attributes.get('gen_ai.ttft_ms')
+        if ttft is not None:
+            try:
+                return int(ttft)
+            except (TypeError, ValueError):
+                pass
+
+        # Check span events for first token event
+        for event in span.events:
+            if 'first_token' in event.get('name', '').lower():
+                # Calculate TTFT from event timestamp relative to span start
+                event_time = event.get('timestamp')
+                if event_time:
+                    try:
+                        if isinstance(event_time, datetime):
+                            ttft_ms = int((event_time - span.start_time).total_seconds() * 1000)
+                            return max(0, ttft_ms)
+                    except (TypeError, ValueError):
+                        pass
+
+        return None
+
+    def get_sessions(self) -> List[Session]:
+        """Get extracted sessions for agentic workload generation.
+
+        Returns:
+            List of Session objects extracted from OTel traces.
+        """
+        return self.sessions
 
     def _extract_conversations_from_trace(self, trace: OTelTrace) -> List[List[ChatMessage]]:
         """Extract conversations from a trace."""

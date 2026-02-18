@@ -1,0 +1,96 @@
+# Example: Agentic Sweep Mode with Synthetic Sessions
+#
+# This configuration automatically detects the saturation point of an
+# inference system under agentic workloads by:
+# 1. Running probe stages at increasing session arrival rates
+# 2. Monitoring session_inference_time_p95 for degradation
+# 3. Generating optimal stages up to the saturation point
+#
+# Usage:
+#   python -m inference_perf -c examples/agentic/sweep_synthetic.yaml
+
+api:
+  type: chat
+  streaming: true
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 500
+    turns_per_session:
+      type: normal
+      mean: 4
+      std_dev: 1.5
+      min: 2
+      max: 10
+    tool_call_probability: 0.6
+    tool_calls_per_turn:
+      type: normal
+      mean: 1.5
+      std_dev: 0.5
+      min: 1
+      max: 3
+    input_tokens_turn_0:
+      type: normal
+      mean: 800
+      std_dev: 200
+      min: 200
+      max: 2000
+    output_tokens_per_turn:
+      type: normal
+      mean: 150
+      std_dev: 50
+      min: 20
+      max: 400
+    tool_result_tokens:
+      type: normal
+      mean: 100
+      std_dev: 40
+      min: 20
+      max: 300
+    system_prompt_tokens: 512
+    content_strategy: random
+
+load:
+  type: agentic
+
+  # Sweep configuration - automatically finds saturation point
+  agentic_sweep:
+    type: linear               # linear or geometric stage progression
+    num_sessions: 100          # Sessions per probe stage
+    timeout: 120               # Probe timeout in seconds
+    num_stages: 5              # Number of stages to generate
+    stage_duration: 180        # Duration per generated stage
+    saturation_metric: session_inference_time_p95
+    degradation_threshold: 0.2 # 20% increase triggers saturation detection
+    min_probe_rate: 1.0        # Minimum sessions/sec to probe
+    max_probe_rate: 20.0       # Maximum sessions/sec to probe
+    num_probes: 5              # Number of probe rate levels
+
+  # Inter-turn delay configuration
+  agentic:
+    tool_call_delay:
+      type: zero               # zero for stress test, replay for realistic timing
+    user_think_delay:
+      type: zero
+
+  # Worker configuration
+  num_workers: 4
+  worker_max_concurrency: 50
+  request_timeout: 60.0
+  worker_affinity: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3-8B-Instruct
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+    session_summary: true
+    system_summary: true
+    timeseries: true

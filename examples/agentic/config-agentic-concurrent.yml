@@ -1,0 +1,93 @@
+# Agentic Concurrent Load Example
+#
+# This configuration maintains a fixed number of concurrent sessions.
+# When a session completes, a new one starts to maintain the target
+# concurrency level.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 500
+    turns_per_session:
+      type: normal
+      mean: 5
+      std_dev: 2
+      min: 2
+      max: 12
+    tool_call_probability: 0.6
+    tool_calls_per_turn:
+      type: normal
+      mean: 2
+      std_dev: 1
+      min: 1
+      max: 4
+    input_tokens_turn_0:
+      type: normal
+      mean: 600
+      std_dev: 150
+      min: 200
+      max: 2000
+    output_tokens_per_turn:
+      type: normal
+      mean: 180
+      std_dev: 60
+      min: 30
+      max: 500
+    tool_result_tokens:
+      type: normal
+      mean: 120
+      std_dev: 50
+      min: 20
+      max: 400
+    system_prompt_tokens: 250
+
+load:
+  type: agentic_concurrent
+  num_workers: 8
+  worker_max_concurrency: 100
+
+  session_arrival:
+    type: constant  # Used internally for concurrent mode
+    stages:
+      # Low concurrency stage
+      - active_sessions: 5    # Maintain 5 concurrent sessions
+        total_sessions: 50    # Run 50 sessions total
+
+      # Medium concurrency stage
+      - active_sessions: 10   # Maintain 10 concurrent sessions
+        total_sessions: 100   # Run 100 sessions total
+
+      # High concurrency stage
+      - active_sessions: 20   # Maintain 20 concurrent sessions
+        total_sessions: 200   # Run 200 sessions total
+
+  agentic:
+    tool_call_delay:
+      type: distribution
+      distribution:
+        type: uniform
+        min: 50
+        max: 200  # 50-200ms random delay for tool calls
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_concurrent

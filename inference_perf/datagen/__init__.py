@@ -23,6 +23,8 @@ from .hf_billsum_datagen import BillsumConversationsDataGenerator
 from .tau2_bench_datagen import Tau2BenchDataGenerator
 from .langfuse_datagen import LangfuseDataGenerator
 from .otel_datagen import OpenTelemetryDataGenerator
+from .agentic_synthetic_datagen import AgenticSyntheticDataGenerator
+from .agentic_csv_datagen import AgenticCsvDataGenerator
 
 __all__ = [
     "DataGenerator",
@@ -38,4 +40,6 @@ __all__ = [
     "Tau2BenchDataGenerator",
     "LangfuseDataGenerator",
     "OpenTelemetryDataGenerator",
+    "AgenticSyntheticDataGenerator",
+    "AgenticCsvDataGenerator",
 ]

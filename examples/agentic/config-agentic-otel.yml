@@ -1,0 +1,78 @@
+# Agentic OpenTelemetry Data Generator Example
+#
+# This configuration extracts agentic sessions from OpenTelemetry traces
+# collected from a Jaeger backend. The traces are converted to Session
+# objects with turns and tool calls.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: otel
+  otel:
+    # Backend configuration
+    backend: jaeger
+    endpoint: http://localhost:16686/api
+
+    # Optional authentication
+    # auth:
+    #   type: bearer
+    #   bearer_token: ${JAEGER_TOKEN}
+
+    # Trace filtering
+    service_name: my-agent-service
+    operation_name: llm_call
+    # tags:
+    #   - environment=production
+
+    # Time range (use lookback OR start_time/end_time)
+    lookback: 24h
+    # start_time: "2024-02-15T00:00:00Z"
+    # end_time: "2024-02-16T00:00:00Z"
+
+    # Trace selection
+    limit: 500
+    min_duration_ms: 100
+    # max_duration_ms: 60000
+
+    # Conversation extraction
+    enable_multi_turn_chat: true
+    include_system_prompts: true
+    extract_tool_calls: true
+    min_turns: 2  # Only include sessions with 2+ turns
+
+load:
+  type: agentic
+  num_workers: 4
+  worker_max_concurrency: 50
+
+  session_arrival:
+    type: constant
+    stages:
+      - rate: 1.5
+        duration: 120
+
+  agentic:
+    tool_call_delay:
+      type: replay  # Use original tool durations from traces
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+    per_program: true  # Group by original trace ID
+
+storage:
+  local_storage:
+    path: reports/agentic_otel

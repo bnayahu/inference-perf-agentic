@@ -1,0 +1,56 @@
+# Agentic Trace Replay Example
+#
+# This configuration replays sessions at their original timestamps,
+# useful for reproducing production traffic patterns. The time_scale
+# parameter allows speeding up or slowing down the replay.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_csv
+  agentic_csv:
+    # CSV file must include timestamp_ms column for trace replay
+    path: examples/agentic/data/sessions.csv
+
+load:
+  type: agentic_trace_replay
+  num_workers: 8
+  worker_max_concurrency: 100
+
+  session_arrival:
+    type: trace  # Sessions arrive at original timestamps
+
+    # Time scale for replay:
+    # - 1.0 = real-time (original speed)
+    # - 2.0 = 2x speed (sessions arrive twice as fast)
+    # - 0.5 = half speed (sessions arrive half as fast)
+    time_scale: 1.0
+
+    stages:
+      - total_sessions: 100  # Replay first 100 sessions
+
+  agentic:
+    tool_call_delay:
+      type: replay  # Replay original tool execution times
+    user_think_delay:
+      type: replay  # Replay original inter-turn delays
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+    per_program: true
+
+storage:
+  local_storage:
+    path: reports/agentic_trace_replay

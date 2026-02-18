@@ -15,7 +15,7 @@ from argparse import ArgumentParser
 from inference_perf.analysis.analyze import analyze_reports
 from typing import List, Optional
 from inference_perf.client.modelserver.tgi_client import TGImodelServerClient
-from inference_perf.loadgen import LoadGenerator
+from inference_perf.loadgen import LoadGenerator, AgenticLoadGenerator
 from inference_perf.config import (
     DataGenType,
     LoadType,
@@ -39,6 +39,8 @@ from inference_perf.datagen import (
     Tau2BenchDataGenerator,
     LangfuseDataGenerator,
     OpenTelemetryDataGenerator,
+    AgenticSyntheticDataGenerator,
+    AgenticCsvDataGenerator,
 )
 from inference_perf.client.modelserver import (
     ModelServerClient,
@@ -311,6 +313,14 @@ def main_cli() -> None:
             datagen = LangfuseDataGenerator(config.api, config.data, tokenizer)
         elif config.data.type == DataGenType.OpenTelemetry:
             datagen = OpenTelemetryDataGenerator(config.api, config.data, tokenizer)
+        elif config.data.type == DataGenType.AgenticSynthetic:
+            if config.data.agentic_synthetic is None:
+                raise Exception("AgenticSynthetic data generator requires 'agentic_synthetic' to be configured")
+            datagen = AgenticSyntheticDataGenerator(config.api, config.data, tokenizer)
+        elif config.data.type == DataGenType.AgenticCsv:
+            if config.data.agentic_csv is None:
+                raise Exception("AgenticCsv data generator requires 'agentic_csv' to be configured")
+            datagen = AgenticCsvDataGenerator(config.api, config.data, tokenizer)
         else:
             datagen = MockDataGenerator(config.api, config.data, tokenizer)
     else:
@@ -319,7 +329,55 @@ def main_cli() -> None:
     # Define LoadGenerator
     if isinstance(metrics_client, PrometheusMetricsClient) and config.report.prometheus and config.report.prometheus.per_stage:
         config.load.interval = max(config.load.interval, metrics_client.scrape_interval)
-    loadgen = LoadGenerator(datagen, config.load)
+
+    # Check if using agentic load type
+    is_agentic_load = config.load.type in (
+        LoadType.AGENTIC,
+        LoadType.AGENTIC_CONCURRENT,
+        LoadType.AGENTIC_TRACE_REPLAY,
+    )
+
+    if is_agentic_load:
+        # Agentic load requires session-based data generator
+        if not hasattr(datagen, 'get_sessions'):
+            raise Exception(
+                f"Agentic load types require a data generator that provides sessions. "
+                f"Use data type 'agentic_synthetic', 'agentic_csv', 'otel', or 'langfuse'."
+            )
+
+        # Get sessions from the data generator
+        sessions = datagen.get_sessions()
+        if not sessions:
+            raise Exception("No sessions available from data generator for agentic load")
+
+        # Log sweep configuration if present
+        if config.load.agentic_sweep:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Agentic sweep configured: "
+                f"num_sessions={config.load.agentic_sweep.num_sessions}, "
+                f"probe_range=[{config.load.agentic_sweep.min_probe_rate:.1f}, "
+                f"{config.load.agentic_sweep.max_probe_rate:.1f}], "
+                f"num_stages={config.load.agentic_sweep.num_stages}"
+            )
+
+        # Create a factory function for model server clients
+        def client_factory() -> ModelServerClient:
+            return model_server_client
+
+        # Use AgenticLoadGenerator for session-based workloads
+        agentic_loadgen = AgenticLoadGenerator(
+            sessions=sessions,
+            load_config=config.load,
+            api_config=config.api,
+            client_factory=client_factory,
+        )
+        loadgen = LoadGenerator(datagen, config.load)  # For stage_runtime_info compatibility
+        loadgen_to_use = agentic_loadgen
+    else:
+        loadgen = LoadGenerator(datagen, config.load)
+        loadgen_to_use = loadgen
 
     # Setup Perf Test Runner
     perfrunner = InferencePerfRunner(model_server_client, loadgen, reportgen, storage_clients)
@@ -327,7 +385,21 @@ def main_cli() -> None:
     start_time = time.time()
 
     # Run Perf Test
-    perfrunner.run()
+    agentic_session_results = None
+    agentic_stage_results = None
+
+    if is_agentic_load:
+        # Run agentic load generator
+        async def _run_agentic() -> None:
+            async with reportgen.get_metrics_collector().start():
+                await agentic_loadgen.run(model_server_client)
+        asyncio.run(_run_agentic())
+
+        # Capture session results for reporting
+        agentic_stage_results = agentic_loadgen.get_stage_results()
+        agentic_session_results = agentic_loadgen.get_all_session_results()
+    else:
+        perfrunner.run()
 
     end_time = time.time()
     duration = end_time - start_time  # Calculate the duration of the test
@@ -342,6 +414,21 @@ def main_cli() -> None:
             stages=loadgen.stage_runtime_info,
         ),
     )
+
+    # Generate agentic session reports if we have session results
+    if is_agentic_load and agentic_session_results:
+        session_reports = reportgen.generate_session_reports(
+            session_results=agentic_session_results,
+            stage_results=agentic_stage_results,
+            report_config=config.report,
+        )
+        reports.extend(session_reports)
+
+        # Generate sweep/saturation report if sweep was run
+        saturation_result = agentic_loadgen.get_saturation_result()
+        if saturation_result:
+            sweep_reports = reportgen.generate_sweep_report(saturation_result)
+            reports.extend(sweep_reports)
 
     # Save Reports
     perfrunner.save_reports(reports=reports)

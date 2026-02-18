@@ -1,0 +1,89 @@
+# Agentic Rate-Based Load Example
+#
+# This configuration demonstrates rate-based session arrivals with
+# multiple stages. Sessions arrive at a specified rate (sessions/sec).
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 200
+    turns_per_session:
+      type: normal
+      mean: 4
+      std_dev: 1.5
+      min: 1
+      max: 10
+    tool_call_probability: 0.5
+    tool_calls_per_turn:
+      type: uniform
+      min: 1
+      max: 3
+    input_tokens_turn_0:
+      type: normal
+      mean: 400
+      std_dev: 100
+      min: 100
+      max: 1500
+    output_tokens_per_turn:
+      type: normal
+      mean: 120
+      std_dev: 40
+      min: 20
+      max: 300
+    tool_result_tokens:
+      type: uniform
+      min: 50
+      max: 200
+    system_prompt_tokens: 150
+
+load:
+  type: agentic
+  num_workers: 8
+  worker_max_concurrency: 100
+
+  session_arrival:
+    type: constant  # Constant rate arrivals
+    stages:
+      # Warm-up stage
+      - rate: 0.5       # 0.5 sessions/sec
+        duration: 30    # 30 seconds
+
+      # Ramp-up stage
+      - rate: 1.0       # 1 session/sec
+        duration: 60    # 1 minute
+
+      # Peak load stage
+      - rate: 2.0       # 2 sessions/sec
+        duration: 120   # 2 minutes
+
+      # Cool-down stage
+      - rate: 0.5       # 0.5 sessions/sec
+        duration: 30    # 30 seconds
+
+  agentic:
+    tool_call_delay:
+      type: fixed
+      fixed_ms: 100  # 100ms fixed delay for tool calls
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_rate_based

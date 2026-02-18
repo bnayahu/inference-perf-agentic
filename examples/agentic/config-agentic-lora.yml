@@ -1,0 +1,89 @@
+# Agentic LoRA Multi-Adapter Example
+#
+# This configuration demonstrates testing with multiple LoRA adapters,
+# with traffic split across different adapter configurations. Each
+# session is assigned an adapter at session start (not per-turn).
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 300
+    turns_per_session:
+      type: normal
+      mean: 4
+      std_dev: 1.5
+      min: 1
+      max: 10
+    tool_call_probability: 0.5
+    tool_calls_per_turn:
+      type: uniform
+      min: 1
+      max: 3
+    input_tokens_turn_0:
+      type: normal
+      mean: 450
+      std_dev: 100
+      min: 100
+      max: 1200
+    output_tokens_per_turn:
+      type: normal
+      mean: 140
+      std_dev: 45
+      min: 25
+      max: 350
+    tool_result_tokens:
+      type: uniform
+      min: 40
+      max: 180
+    system_prompt_tokens: 180
+
+load:
+  type: agentic
+  num_workers: 8
+  worker_max_concurrency: 100
+
+  # LoRA adapter traffic split
+  # Each session is assigned one adapter for all its turns
+  lora_traffic_split:
+    - name: customer_support_lora
+      split: 0.4   # 40% of sessions
+    - name: code_assistant_lora
+      split: 0.35  # 35% of sessions
+    - name: data_analyst_lora
+      split: 0.25  # 25% of sessions
+
+  session_arrival:
+    type: constant
+    stages:
+      - rate: 2.0
+        duration: 180
+
+  agentic:
+    tool_call_delay:
+      type: fixed
+      fixed_ms: 100
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+    per_adapter: true         # Report metrics per LoRA adapter
+    per_adapter_stage: true   # Report per adapter per stage
+
+storage:
+  local_storage:
+    path: reports/agentic_lora

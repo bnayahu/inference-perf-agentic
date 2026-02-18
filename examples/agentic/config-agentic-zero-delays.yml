@@ -1,0 +1,82 @@
+# Agentic Zero Delays Example (Stress Test)
+#
+# This configuration uses zero delays between turns, maximizing
+# throughput for stress testing the model server. Sessions execute
+# turns back-to-back without pauses.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    num_sessions: 200
+    turns_per_session:
+      type: normal
+      mean: 6
+      std_dev: 2
+      min: 2
+      max: 15
+    tool_call_probability: 0.7  # High tool call probability
+    tool_calls_per_turn:
+      type: normal
+      mean: 3
+      std_dev: 1
+      min: 1
+      max: 5
+    input_tokens_turn_0:
+      type: normal
+      mean: 600
+      std_dev: 150
+      min: 200
+      max: 2500
+    output_tokens_per_turn:
+      type: normal
+      mean: 200
+      std_dev: 60
+      min: 50
+      max: 600
+    tool_result_tokens:
+      type: normal
+      mean: 150
+      std_dev: 50
+      min: 20
+      max: 500
+    system_prompt_tokens: 300
+
+load:
+  type: agentic
+  num_workers: 8
+  worker_max_concurrency: 200  # High concurrency for stress test
+
+  session_arrival:
+    type: poisson  # Bursty arrivals for stress testing
+    stages:
+      # Aggressive load
+      - rate: 5.0       # 5 sessions per second
+        duration: 120   # 2 minutes
+
+  agentic:
+    # ZERO delays - turns execute back-to-back
+    tool_call_delay:
+      type: zero
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true
+    per_turn_position: true
+
+storage:
+  local_storage:
+    path: reports/agentic_stress_test

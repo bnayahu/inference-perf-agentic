@@ -1,0 +1,103 @@
+# Agentic Synthetic Data Generator Example
+#
+# This configuration generates synthetic agentic sessions with configurable
+# distributions for turns, tokens, and tool calls.
+
+api:
+  type: chat
+  streaming: true
+
+server:
+  type: vllm
+  base_url: http://localhost:8000
+  model_name: meta-llama/Llama-3.1-8B-Instruct
+  ignore_eos: false
+
+data:
+  type: agentic_synthetic
+  agentic_synthetic:
+    # Number of synthetic sessions to generate
+    num_sessions: 100
+
+    # Distribution for turns per session
+    turns_per_session:
+      type: normal
+      mean: 5
+      std_dev: 2
+      min: 1
+      max: 15
+
+    # Probability that a turn ends with tool calls
+    tool_call_probability: 0.6
+
+    # Distribution for number of tool calls per turn
+    tool_calls_per_turn:
+      type: normal
+      mean: 2
+      std_dev: 1
+      min: 1
+      max: 5
+
+    # Distribution for input tokens in first turn
+    input_tokens_turn_0:
+      type: normal
+      mean: 500
+      std_dev: 150
+      min: 100
+      max: 2000
+
+    # Distribution for output tokens per turn
+    output_tokens_per_turn:
+      type: normal
+      mean: 150
+      std_dev: 50
+      min: 20
+      max: 500
+
+    # Distribution for tool result tokens
+    tool_result_tokens:
+      type: normal
+      mean: 100
+      std_dev: 40
+      min: 10
+      max: 400
+
+    # Fixed system prompt tokens (added to initial context)
+    system_prompt_tokens: 200
+
+    # Content generation strategy: random, synthetic, template
+    content_strategy: random
+
+load:
+  type: agentic
+  num_workers: 4
+  worker_max_concurrency: 50
+  worker_affinity: true  # Pin sessions to workers for better cache utilization
+
+  # Session arrival configuration
+  session_arrival:
+    type: constant  # constant rate arrivals
+    stages:
+      - rate: 1.0      # 1 session per second
+        duration: 120  # for 2 minutes
+
+  # Inter-turn delay configuration
+  agentic:
+    tool_call_delay:
+      type: zero  # No delay for stress testing
+    user_think_delay:
+      type: zero
+
+report:
+  request_lifecycle:
+    summary: true
+    per_stage: true
+    per_session: true         # Enable session-level metrics
+    per_turn_position: true   # Enable per-turn-position aggregation
+    session_summary: true     # Enable session summary statistics
+    system_summary: true      # Enable system-level agentic metrics
+    timeseries: true          # Enable time series data collection
+
+storage:
+  local_storage:
+    path: reports/agentic_synthetic
