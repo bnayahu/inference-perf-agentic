@@ -243,8 +243,21 @@ def main_cli() -> None:
     if config.load is None:
         raise Exception("load config missing")
 
-    if len(config.load.stages) == 0 and config.load.sweep is None:
-        raise Exception("Load stages must be configured, or sweep must be configured")
+    # Check if this is an agentic load type
+    is_agentic = config.load.type in (
+        LoadType.AGENTIC,
+        LoadType.AGENTIC_CONCURRENT,
+        LoadType.AGENTIC_TRACE_REPLAY
+    )
+
+    # For agentic loads, check session_arrival.stages; for others, check load.stages
+    if is_agentic:
+        if config.load.session_arrival is None or len(config.load.session_arrival.stages) == 0:
+            if config.load.agentic_sweep is None:
+                raise Exception("For agentic loads: session_arrival stages must be configured, or agentic_sweep must be configured")
+    else:
+        if len(config.load.stages) == 0 and config.load.sweep is None:
+            raise Exception("Load stages must be configured, or sweep must be configured")
 
     # Define DataGenerator
     datagen: DataGenerator
@@ -405,13 +418,16 @@ def main_cli() -> None:
     duration = end_time - start_time  # Calculate the duration of the test
 
     # Generate Reports after the tests
+    # For agentic loads, use agentic_loadgen.stage_runtime_info; for regular loads, use loadgen.stage_runtime_info
+    stage_runtime_info = agentic_loadgen.stage_runtime_info if is_agentic_load else loadgen.stage_runtime_info
+
     reports = perfrunner.generate_reports(
         report_config=config.report,
         runtime_parameters=PerfRuntimeParameters(
             start_time=start_time,
             duration=duration,
             model_server_metrics=model_server_client.get_prometheus_metric_metadata(),
-            stages=loadgen.stage_runtime_info,
+            stages=stage_runtime_info,
         ),
     )
 

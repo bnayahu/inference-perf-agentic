@@ -32,6 +32,7 @@ import numpy as np
 from tqdm import tqdm
 
 from inference_perf.client.modelserver import ModelServerClient
+from inference_perf.client.metricsclient.base import StageRuntimeInfo, StageStatus
 from inference_perf.config import (
     APIConfig,
     LoadConfig,
@@ -127,6 +128,7 @@ class AgenticLoadGenerator:
 
         # Results storage
         self.stage_results: List[StageResult] = []
+        self.stage_runtime_info: dict[int, StageRuntimeInfo] = {}
 
         # Sweep configuration
         self.sweep_config = load_config.agentic_sweep
@@ -208,6 +210,16 @@ class AgenticLoadGenerator:
             logger.info(
                 f"Stage {stage_id} completed: {result.completed_sessions}/{result.total_sessions} sessions, "
                 f"avg latency {result.avg_session_latency_ms:.0f}ms"
+            )
+
+            # Record stage runtime info for report generation
+            self.stage_runtime_info[stage_id] = StageRuntimeInfo(
+                stage_id=stage_id,
+                rate=stage_config.rate or 0.0,  # Use 0.0 if rate is None (e.g., concurrent mode)
+                start_time=result.start_time,
+                end_time=result.end_time,
+                status=StageStatus.COMPLETED if result.completed_sessions > 0 else StageStatus.FAILED,
+                concurrency_level=stage_config.active_sessions,  # Will be None for rate-based modes
             )
 
     async def run_stage(
