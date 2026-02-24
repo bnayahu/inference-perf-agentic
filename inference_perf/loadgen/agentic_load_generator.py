@@ -25,7 +25,7 @@ import random
 import time
 from dataclasses import dataclass, field
 from types import FrameType
-from typing import Callable, List, Optional
+from typing import Any, Callable, List, Optional
 import signal
 
 import numpy as np
@@ -101,6 +101,7 @@ class AgenticLoadGenerator:
         load_config: LoadConfig,
         api_config: APIConfig,
         client_factory: Callable[[], ModelServerClient],
+        data_generator: Optional[Any] = None,
     ):
         """Initialize the agentic load generator.
 
@@ -109,11 +110,13 @@ class AgenticLoadGenerator:
             load_config: Load configuration with arrival patterns.
             api_config: API configuration for requests.
             client_factory: Factory function to create model server clients.
+            data_generator: Optional data generator for loading lazy data.
         """
         self.sessions = sessions
         self.load_config = load_config
         self.api_config = api_config
         self.client_factory = client_factory
+        self.data_generator = data_generator
 
         # Session arrival config
         self.arrival_config = load_config.session_arrival
@@ -587,6 +590,7 @@ class AgenticLoadGenerator:
             delay_config=self.delay_config,
             stage_id=stage_id,
             lora_adapter=lora_adapter,
+            data_generator=self.data_generator,
         )
 
         return await runner.run()

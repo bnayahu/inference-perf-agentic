@@ -23,7 +23,7 @@ import logging
 import random
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from inference_perf.apis import ChatCompletionAPIData, ChatMessage, InferenceAPIData
 from inference_perf.client.modelserver import ModelServerClient
@@ -120,6 +120,7 @@ class SessionRunner:
         delay_config: Optional[AgenticDelayConfig] = None,
         stage_id: int = 0,
         lora_adapter: Optional[str] = None,
+        data_generator: Optional[Any] = None,
     ):
         """Initialize the session runner.
 
@@ -130,6 +131,7 @@ class SessionRunner:
             delay_config: Configuration for inter-turn delays.
             stage_id: Load stage identifier.
             lora_adapter: Optional LoRA adapter name.
+            data_generator: Optional data generator for loading lazy data.
         """
         self.session = session
         self.client = client
@@ -137,6 +139,7 @@ class SessionRunner:
         self.delay_config = delay_config or AgenticDelayConfig()
         self.stage_id = stage_id
         self.lora_adapter = lora_adapter
+        self.data_generator = data_generator
 
         # Context accumulation
         self.context: List[ChatMessage] = []
@@ -261,16 +264,35 @@ class SessionRunner:
         Returns:
             InferenceAPIData ready to send to the model server.
         """
-        # For now, build a ChatCompletionAPIData with synthetic messages
-        # In a real implementation, this would use actual message content
+        # If data generator is available and supports lazy loading, use it
+        if self.data_generator and hasattr(self.data_generator, 'load_lazy_data'):
+            # Create a LazyLoadInferenceAPIData reference
+            from inference_perf.apis import LazyLoadInferenceAPIData
 
+            # Find the session index
+            session_idx = next(
+                (i for i, s in enumerate(self.data_generator.sessions) if s.session_id == self.session.session_id),
+                0
+            )
+
+            # Calculate data_index: session_idx + turn_idx * num_sessions
+            data_index = session_idx + turn.turn_index * len(self.data_generator.sessions)
+
+            lazy_data = LazyLoadInferenceAPIData(
+                data_index=data_index,
+                prefered_worker_id=session_idx,
+            )
+
+            # Load the actual data with proper messages including system prompt
+            return self.data_generator.load_lazy_data(lazy_data)
+
+        # Fallback: build a ChatCompletionAPIData with placeholder messages
         messages: List[ChatMessage] = []
 
         # Add accumulated context
         messages.extend(self.context)
 
         # Add a user message for this turn
-        # The actual content would come from the session data
         messages.append(ChatMessage(
             role="user",
             content=f"Turn {turn.turn_index} input"
