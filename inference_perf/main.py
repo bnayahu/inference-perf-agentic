@@ -233,6 +233,10 @@ def main_cli() -> None:
                 reportgen.get_metrics_collector(),
                 api_config=config.api,
                 timeout=config.load.request_timeout,
+                ignore_eos=config.server.ignore_eos,
+                max_completion_tokens=config.server.max_completion_tokens,
+                debug_log_enabled=config.server.debug_log_enabled,
+                debug_log_file=config.server.debug_log_file,
             )
             tokenizer = model_server_client.tokenizer
     else:
@@ -385,6 +389,7 @@ def main_cli() -> None:
             load_config=config.load,
             api_config=config.api,
             client_factory=client_factory,
+            data_generator=datagen,
         )
         loadgen = LoadGenerator(datagen, config.load)  # For stage_runtime_info compatibility
         loadgen_to_use = agentic_loadgen

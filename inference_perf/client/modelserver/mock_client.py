@@ -20,6 +20,9 @@ from .base import ModelServerClient, ModelServerPrometheusMetric, PrometheusMetr
 import asyncio
 import time
 import logging
+import json
+from datetime import datetime
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -31,11 +34,67 @@ class MockModelServerClient(ModelServerClient):
         api_config: APIConfig,
         timeout: Optional[float] = None,
         mock_latency: float = 1,
+        ignore_eos: bool = True,
+        max_completion_tokens: int = 30,
+        debug_log_enabled: bool = False,
+        debug_log_file: str = "inference_requests_debug.json",
     ) -> None:
         super().__init__(api_config, timeout)
         self.metrics_collector = metrics_collector
         self.mock_latency = mock_latency
+        self.ignore_eos = ignore_eos
+        self.max_completion_tokens = max_completion_tokens
         self.tokenizer = None
+        self.debug_log_enabled = debug_log_enabled
+        self.debug_log_file = Path(debug_log_file) if debug_log_enabled else None
+        self.request_count = 0
+
+        # Initialize debug log file if enabled
+        if self.debug_log_enabled:
+            # Create parent directory if it doesn't exist
+            self.debug_log_file.parent.mkdir(parents=True, exist_ok=True)
+            # Initialize log file with empty array
+            with open(self.debug_log_file, "w") as f:
+                json.dump([], f)
+            logger.info(f"Debug logging enabled. Logging requests to: {self.debug_log_file}")
+
+    def _log_request_to_file(
+        self,
+        payload: dict,
+        stage_id: int,
+        scheduled_time: float,
+        effective_model_name: str,
+        lora_adapter: Optional[str],
+        program_id: Optional[int],
+        turn_index: Optional[int],
+    ) -> None:
+        """Log request details to JSON debug file."""
+        try:
+            request_log = {
+                "request_id": self.request_count,
+                "timestamp": datetime.now().isoformat(),
+                "stage_id": stage_id,
+                "scheduled_time": scheduled_time,
+                "lora_adapter": lora_adapter,
+                "model_name": effective_model_name,
+                "program_id": program_id,
+                "turn_index": turn_index,
+                "payload": payload,
+            }
+
+            self.request_count += 1
+
+            # Read existing logs, append new one, and write back
+            with open(self.debug_log_file, "r") as f:
+                logs = json.load(f)
+            logs.append(request_log)
+            with open(self.debug_log_file, "w") as f:
+                json.dump(logs, f, indent=2)
+
+            logger.debug(f"Logged request {self.request_count} to {self.debug_log_file}")
+
+        except Exception as e:
+            logger.error(f"Failed to log request to JSON file: {e}")
 
     async def process_request(
         self, data: InferenceAPIData, stage_id: int, scheduled_time: float, lora_adapter: Optional[str] = None
@@ -43,6 +102,25 @@ class MockModelServerClient(ModelServerClient):
         start = time.perf_counter()
         logger.debug("Processing mock request for stage %d", stage_id)
         effective_model_name = lora_adapter if lora_adapter else "mock_model"
+
+        # Log request to JSON file if debug logging is enabled
+        if self.debug_log_enabled:
+            payload = await data.to_payload(
+                effective_model_name,
+                self.max_completion_tokens,
+                self.ignore_eos,
+                self.api_config.streaming,
+            )
+            self._log_request_to_file(
+                payload=payload,
+                stage_id=stage_id,
+                scheduled_time=scheduled_time,
+                effective_model_name=effective_model_name,
+                lora_adapter=lora_adapter,
+                program_id=data.program_id,
+                turn_index=data.turn_index,
+            )
+
         try:
             if self.timeout and self.timeout < self.mock_latency:
                 await asyncio.sleep(self.timeout)
@@ -53,7 +131,14 @@ class MockModelServerClient(ModelServerClient):
                 self.metrics_collector.record_metric(
                     RequestLifecycleMetric(
                         stage_id=stage_id,
-                        request_data=str(await data.to_payload(effective_model_name, 3, False, False)),
+                        request_data=str(
+                            await data.to_payload(
+                                effective_model_name,
+                                self.max_completion_tokens,
+                                self.ignore_eos,
+                                self.api_config.streaming,
+                            )
+                        ),
                         info=InferenceInfo(
                             input_tokens=0,
                             output_tokens=0,
@@ -72,7 +157,14 @@ class MockModelServerClient(ModelServerClient):
             self.metrics_collector.record_metric(
                 RequestLifecycleMetric(
                     stage_id=stage_id,
-                    request_data=str(data.to_payload(effective_model_name, 3, False, False)),
+                    request_data=str(
+                        await data.to_payload(
+                            effective_model_name,
+                            self.max_completion_tokens,
+                            self.ignore_eos,
+                            self.api_config.streaming,
+                        )
+                    ),
                     info=InferenceInfo(
                         input_tokens=0,
                         output_tokens=0,

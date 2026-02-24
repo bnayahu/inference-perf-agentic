@@ -593,11 +593,22 @@ class MetricsClientConfig(BaseModel):
 class ModelServerClientConfig(BaseModel):
     type: ModelServerType = ModelServerType.VLLM
     model_name: Optional[str] = None
-    base_url: str
+    base_url: Optional[str] = None
     ignore_eos: bool = True
     api_key: Optional[str] = None
     cert_path: Optional[str] = None
     key_path: Optional[str] = None
+    max_completion_tokens: int = 30
+    # Debug logging options (primarily for mock client)
+    debug_log_enabled: bool = False
+    debug_log_file: str = "inference_requests_debug.json"
+
+    @model_validator(mode="after")
+    def validate_base_url(self) -> "ModelServerClientConfig":
+        """Validate that base_url is provided for non-mock server types."""
+        if self.type != ModelServerType.MOCK and self.base_url is None:
+            raise ValueError(f"base_url is required for server type '{self.type.value}'")
+        return self
 
 
 class CustomTokenizerConfig(BaseModel):
