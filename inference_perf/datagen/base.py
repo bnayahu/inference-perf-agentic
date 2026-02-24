@@ -41,9 +41,7 @@ class DataGenerator(ABC):
         if config.shared_prefix is not None and not self.is_shared_prefix_supported():
             raise Exception("Shared prefix not supported for this data generator")
 
-        if tokenizer is not None:
-            self.tokenizer = tokenizer
-
+        self.tokenizer = tokenizer
         self.api_config = api_config
         self.input_distribution = config.input_distribution
         self.output_distribution = config.output_distribution

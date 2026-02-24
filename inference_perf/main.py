@@ -238,7 +238,7 @@ def main_cli() -> None:
                 debug_log_enabled=config.server.debug_log_enabled,
                 debug_log_file=config.server.debug_log_file,
             )
-            tokenizer = model_server_client.tokenizer
+            # MockModelServerClient doesn't provide a tokenizer, so keep the one from config
     else:
         raise Exception("model server client config missing")
 
@@ -275,6 +275,7 @@ def main_cli() -> None:
                 DataGenType.CNNDailyMail,
                 DataGenType.InfinityInstruct,
                 DataGenType.BillsumConversations,
+                DataGenType.SharedPrefix,
             }
         ):
             if tokenizer is None:
