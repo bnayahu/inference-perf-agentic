@@ -5,6 +5,11 @@
 [![Tests](https://img.shields.io/github/actions/workflow/status/kubernetes-sigs/inference-perf/unit_test.yml?branch=main&label=Tests)](https://github.com/kubernetes-sigs/inference-perf/actions/workflows/unit_test.yml)
 [![Join Slack](https://img.shields.io/badge/Join_Slack-blue?logo=slack)](https://kubernetes.slack.com/?redir=%2Fmessages%2Finference-perf)
 
+# Inference Perf - Agentic
+
+This fork extends Inference Perf with the ability to simulate agentic workloads for performing benchmarking. This work aims to support the [llm-d as the Agentic Runtime Northstar](https://docs.google.com/document/d/1C3wRYLSZ9GPT2454MvDC6-8T_gvMPsPL_-ISVTZj4FU/edit?usp=sharing). A starting point to understand the new capabilities is [Agentic Workload Benchmarking Examples](examples/agentic). 
+
+
 # Inference Perf
 
 Inference Perf is a GenAI inference performance benchmarking tool that allows you to benchmark and analyze the performance of inference deployments. It is agnostic of model servers and can be used to measure performance and compare different systems apples-to-apples. It is a part of the inference benchmarking and metrics standardization effort in [wg-serving](https://github.com/kubernetes/community/tree/master/wg-serving) which aims to standardize the [benchmark tooling](https://github.com/kubernetes-sigs/wg-serving/tree/main/proposals/013-inference-perf) and the [metrics](https://docs.google.com/document/d/1SpSp1E6moa4HSrJnS4x3NpLuj88sMXr2tbofKlzTZpk/edit?usp=sharing&resourcekey=0-ob5dR-AJxLQ5SvPlA4rdsg) used to measure inference performance across the Kubernetes and model server communities.
